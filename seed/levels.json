@@ -1,0 +1,97 @@
+[
+  {
+    "key": "prelevel",
+    "order": 0,
+    "title": "Foundations of PBLS",
+    "scene": "The playground",
+    "role": "Bystander",
+    "badge": "Vigilant eye",
+    "passMark": 80,
+    "status": "published",
+    "objectives": [
+      "Define the pediatric basic life support",
+      "Enlist the conditions which require pediatric basic life support",
+      "Identify the age group that comes under PBLS",
+      "Enumerate the causative factors that lead to pediatric cardiac arrest",
+      "Explain pediatric cardiac arrest",
+      "Determine the physiology behind pediatric cardiac arrest",
+      "Differentiate between child and adult life support",
+      "Differentiate between child and infant life support",
+      "Determine the difference between NRP and PBLS"
+    ]
+  },
+  {
+    "key": "l1",
+    "order": 1,
+    "title": "Recognition of pediatric cardiac arrest",
+    "scene": "The living room",
+    "role": "First responder",
+    "badge": "Scene secured",
+    "passMark": 80,
+    "status": "published",
+    "objectives": [
+      "Ensure scene safety",
+      "Assess responsiveness",
+      "Activate emergency response",
+      "Assess breathing",
+      "Check pulse correctly",
+      "Recognize respiratory arrest",
+      "Recognize cardiac arrest",
+      "Decide when to start CPR",
+      "Differentiate respiratory distress, respiratory failure, shock and cardiac arrest"
+    ]
+  },
+  {
+    "key": "l2",
+    "order": 2,
+    "title": "High quality CPR",
+    "scene": "Poolside",
+    "role": "CPR provider",
+    "badge": "Rhythm keeper",
+    "passMark": 80,
+    "status": "published",
+    "objectives": [
+      "Describe the Pediatric Chain of Survival",
+      "Recognize when CPR is needed",
+      "Initiate high-quality CPR",
+      "Differentiate infant and child CPR techniques",
+      "Perform single-rescuer and two-rescuer CPR",
+      "Follow the PBLS algorithm correctly"
+    ]
+  },
+  {
+    "key": "l3",
+    "order": 3,
+    "title": "Use of AED and choking management",
+    "scene": "The football field",
+    "role": "AED operator",
+    "badge": "Shock ready",
+    "passMark": 80,
+    "status": "draft",
+    "authoringNote": "Only one question exists in the source document. Five placeholder stubs are seeded as drafts, one per uncovered objective. Choking management is named in the level title but has no objectives or items in the source and needs both.",
+    "objectives": [
+      "Identify when an AED should be used",
+      "Select appropriate pediatric pads",
+      "Correctly place AED pads",
+      "Follow AED prompts safely",
+      "Resume CPR immediately after shock",
+      "Differentiate AED use in infants and children"
+    ]
+  },
+  {
+    "key": "l4",
+    "order": 4,
+    "title": "Team dynamics",
+    "scene": "The emergency room",
+    "role": "Team leader",
+    "badge": "Closed loop",
+    "passMark": 80,
+    "status": "published",
+    "objectives": [
+      "Identify the principles of effective team dynamics during pediatric resuscitation",
+      "Demonstrate appropriate leadership behaviors during a pediatric cardiac arrest",
+      "Assign roles and responsibilities effectively within the resuscitation team",
+      "Apply closed-loop communication during pediatric CPR"
+    ]
+  }
+]

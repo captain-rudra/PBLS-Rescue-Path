@@ -1,0 +1,8 @@
+{
+  "name": "pbls-rescue-path-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": { "dev": "node --watch src/server.js", "start": "node src/server.js", "seed": "node ../seed/seed.js", "seed:validate": "node ../seed/seed.js --validate-only", "test:play": "node ../scripts/e2e-play.js" },
+  "dependencies": { "dotenv": "latest", "express": "latest", "mongoose": "latest" }
+}

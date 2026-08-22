@@ -1,0 +1,13 @@
+{
+  "name": "pbls-rescue-path",
+  "private": true,
+  "type": "module",
+  "workspaces": ["client", "server"],
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "dev:server": "npm run dev --workspace server",
+    "dev:client": "npm run dev --workspace client",
+    "seed": "npm run seed --workspace server",
+    "seed:validate": "npm run seed:validate --workspace server"
+  }
+}
