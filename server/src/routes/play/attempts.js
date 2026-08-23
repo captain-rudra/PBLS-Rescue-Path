@@ -10,6 +10,28 @@ import { toPlayerQuestion, aggregateAttempt, computeLevelProgress } from "../../
 
 const router = Router();
 
+// Reloads a pinned question set in its original order — $in does not
+// preserve array order, and the response payload must match the sequence
+// the attempt was created with.
+const loadPinnedQuestions = async questionIds => {
+  const found = await Question.find({ _id: { $in: questionIds } });
+  const byId = new Map(found.map(q => [String(q._id), q]));
+  return questionIds.map(id => byId.get(String(id))).filter(Boolean);
+};
+
+const attemptPayload = (attemptDoc, level, questions) => ({
+  attempt: {
+    attemptId: String(attemptDoc._id),
+    levelKey: level.key,
+    kind: attemptDoc.kind,
+    attemptNo: attemptDoc.attemptNo,
+    startedAt: attemptDoc.startedAt,
+    status: attemptDoc.status
+  },
+  level: { key: level.key, title: level.title, passMark: level.passMark, badge: level.badge },
+  questions: questions.map(toPlayerQuestion)
+});
+
 const loadProgressFor = async (participantId, levelKey) => {
   const levels = await Level.find({ deletedAt: null, status: { $in: [STATUS.PUBLISHED, STATUS.LOCKED] } }).sort({ order: 1 });
   const level = levels.find(l => l.key === levelKey);
@@ -42,6 +64,26 @@ router.post("/", async (request, response) => {
   if (!level) return sendError(response, 404, "LEVEL_NOT_FOUND", "No servable level matches that key");
   if (!target.unlocked) return sendError(response, 403, "LEVEL_LOCKED", "This level is not yet unlocked for this participant");
 
+  // POST /play/attempts must be idempotent: a participant can only
+  // meaningfully have one in_progress attempt per level. Returning the
+  // existing one (whatever kind it was started as) instead of creating a
+  // second covers double-click, a retried request on flaky wifi, and two
+  // tabs open on the same level — not just React StrictMode's double
+  // effect invocation, which is what first surfaced this. A restart must
+  // explicitly abandon the old attempt (POST /:id/abandon) before this
+  // will ever create a fresh one.
+  const existingInProgress = await Attempt.findOne({
+    participantId: request.participant._id,
+    levelId: level._id,
+    isPractice: false,
+    status: STATUS.IN_PROGRESS
+  }).sort({ createdAt: -1 });
+
+  if (existingInProgress) {
+    const pinnedQuestions = await loadPinnedQuestions(existingInProgress.questionIds);
+    return response.status(200).json(attemptPayload(existingInProgress, level, pinnedQuestions));
+  }
+
   let missedQuestionIds = null;
 
   if (kind === "replay") {
@@ -67,30 +109,50 @@ router.post("/", async (request, response) => {
 
   const attemptNo = (await Attempt.countDocuments({ participantId: request.participant._id, levelId: level._id })) + 1;
 
-  const attempt = await Attempt.create({
-    participantId: request.participant._id,
-    sessionId: request.participant.sessionId,
-    levelId: level._id,
-    attemptNo,
-    kind,
-    isPractice: false,
-    startedAt: new Date(),
-    status: STATUS.IN_PROGRESS,
-    questionIds: questions.map(q => q._id)
-  });
+  let attempt;
+  try {
+    attempt = await Attempt.create({
+      participantId: request.participant._id,
+      sessionId: request.participant.sessionId,
+      levelId: level._id,
+      attemptNo,
+      kind,
+      isPractice: false,
+      startedAt: new Date(),
+      status: STATUS.IN_PROGRESS,
+      questionIds: questions.map(q => q._id)
+    });
+  } catch (error) {
+    // Backstop for the TOCTOU gap between the idempotency check above and
+    // this insert: another concurrent request for this participant+level
+    // won the race to this attemptNo. Whoever won is the correct attempt
+    // to hand back — same idempotent outcome, just resolved after the fact
+    // instead of before.
+    if (error?.code === 11000) {
+      const winner = await Attempt.findOne({ participantId: request.participant._id, levelId: level._id, status: STATUS.IN_PROGRESS }).sort({ createdAt: -1 });
+      if (winner) {
+        const pinnedQuestions = await loadPinnedQuestions(winner.questionIds);
+        return response.status(200).json(attemptPayload(winner, level, pinnedQuestions));
+      }
+    }
+    throw error;
+  }
 
-  response.status(201).json({
-    attempt: {
-      attemptId: String(attempt._id),
-      levelKey: level.key,
-      kind: attempt.kind,
-      attemptNo: attempt.attemptNo,
-      startedAt: attempt.startedAt,
-      status: attempt.status
-    },
-    level: { key: level.key, title: level.title, passMark: level.passMark, badge: level.badge },
-    questions: questions.map(toPlayerQuestion)
-  });
+  response.status(201).json(attemptPayload(attempt, level, questions));
+});
+
+router.post("/:id/abandon", async (request, response) => {
+  const { id } = request.params;
+  if (!mongoose.isValidObjectId(id)) return sendError(response, 400, "INVALID_ATTEMPT_ID", "Not a valid attempt id");
+
+  const attempt = await Attempt.findOne({ _id: id, participantId: request.participant._id });
+  if (!attempt) return sendError(response, 404, "ATTEMPT_NOT_FOUND", "No such attempt for this participant");
+  if (attempt.status !== STATUS.IN_PROGRESS) return sendError(response, 409, "ATTEMPT_NOT_ACTIVE", `Attempt is already ${attempt.status}`);
+
+  attempt.status = STATUS.ABANDONED;
+  await attempt.save();
+
+  response.json({ attempt: { attemptId: String(attempt._id), status: attempt.status } });
 });
 
 router.post("/:id/submit", async (request, response) => {

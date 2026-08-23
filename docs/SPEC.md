@@ -68,7 +68,13 @@ Instead of hearts, the HUD carries the virtual child's oxygen saturation.
 
 The bar never reaches zero on screen. Deterioration is signalled by the alarm and a
 dimmed scene, not a death animation. A partially correct drag costs proportionally
-(one misplaced token out of six costs 2, not the full 7).
+(one misplaced token out of six costs 2, not the full 7). This cost model is shared
+between the live HUD and the server's stored `vitalsEnd` — one function, imported by
+both — never two implementations computing two numbers for the same reading.
+
+"Restarts" means exactly that: the in-progress attempt is abandoned (7) and a new one
+begins at question one. It is not a soft reset — the interrupted attempt remains in the
+data as its own row, `status: abandoned`.
 
 This mechanic is deliberate: the consequence of an error inside the game is the same
 consequence it has in the ward, which is what makes it defensible in the methodology
@@ -185,6 +191,14 @@ Tokens snap to the nearest bucket. Confirm stays disabled until every token is p
 **Scoring is per token, not all-or-nothing** — five of six is not the same as guessing.
 
 ### 3.3 Sequence
+
+`items[]` is authored in `correctOrder` — every seeded sequence question happens to list
+its rows already sorted. The player must never see that order: the client shuffles the
+rows before first render, seeded from `(attemptId, questionId)` rather than a fresh
+random draw, so a mid-question refresh reproduces the same shuffled arrangement instead
+of reshuffling it (the attempt stays the same across a refresh because starting an
+attempt is idempotent, 7). Without the shuffle the item is trivial — the source order
+already answers it, and confirming requires no rearrangement at all.
 
 On confirm, correctly positioned rows lock green and only misplaced rows stay
 draggable, so feedback is positional rather than a bare pass or fail.
@@ -479,6 +493,21 @@ underneath an in-progress attempt.
 `kind` is `first | remediation | replay`.
 `status` is `in_progress | submitted | abandoned | kicked`.
 
+**A participant can only meaningfully have one `in_progress` attempt per level.**
+`POST /play/attempts` is idempotent on `(participantId, levelId)`: if an `in_progress`
+attempt already exists it is returned as-is, never duplicated. This is what makes the
+endpoint safe under a double-click, a retried request on flaky wifi, or two tabs open
+on the same level — not just a client-side guard against re-firing. A unique index on
+`(participantId, levelId, attemptNo)` backstops the same rule at the database layer for
+the narrow race window between the check and the insert.
+
+Nothing that starts an attempt may leave it `in_progress` with no way to reach a
+terminal status. The vitals-restart mechanic (2.3) is the one case in this build that
+interrupts an attempt outright: hitting the third error band abandons the current
+attempt (`status: abandoned`) and starts a fresh one. An `in_progress` document with no
+route to `submitted`, `abandoned` or `kicked` is a bug — `attempts per level` is a
+reported measure (11), and an orphaned row corrupts it.
+
 **`responses`** — append only — `attemptId, participantId, sessionId, questionId,
 questionVersion, levelId, given, isCorrect, partialScore, shownAt, firstInteractionAt,
 answeredAt, hiddenMs, mediaReplays, isRetry, serverReceivedAt`
@@ -574,9 +603,13 @@ GET /admin/audit
 ```
 GET  /play/session                  mode, status, timer settings, server clock
 GET  /play/levels                   unlock state for this participant only
-POST /play/attempts                 starts an attempt, returns questions at pinned versions
+POST /play/attempts                 idempotent — returns the existing in_progress attempt
+                                     for this level if one exists, otherwise starts a new
+                                     one and returns questions at pinned versions
 POST /play/responses                one answer, written immediately, never batched
 POST /play/attempts/:id/submit      scores, awards stars, unlocks or routes to remediation
+POST /play/attempts/:id/abandon     closes an in_progress attempt as abandoned; required
+                                     before starting a new one over it (see 7)
 GET  /play/me/records               this participant's own rows only
 ```
 

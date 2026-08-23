@@ -2,6 +2,8 @@
 // routing. The client only ever submits a `given` payload — everything in
 // this file is what turns that into a score. See docs/SPEC.md section 3.7.
 
+import { responseDamage, vitalsFromDamage } from "../../../shared/vitals.js";
+
 const OPTION_BASED_TYPES = new Set(["mcq", "video_mcq", "animation_mcq", "split_screen", "hotspot_video"]);
 
 const SEQUENCE_POINTS_PER_ROW = 15;
@@ -98,14 +100,6 @@ export const computeStreakBonus = orderedIsCorrect => {
   return Math.min(bonus, 100);
 };
 
-/** The vitals-bar / SpO2 mechanic, driven off wrong-answer count. */
-export const computeVitalsEnd = wrongCount => {
-  if (wrongCount <= 0) return 100;
-  if (wrongCount === 1) return 93;
-  if (wrongCount === 2) return 86;
-  return 79;
-};
-
 /**
  * Star bands apply to `first`/`replay` attempts. A remediation attempt
  * always awards exactly one star on pass, per SPEC 2.7 ("Passing
@@ -126,10 +120,11 @@ export const computeStars = ({ accuracy, passed, kind }) => {
  */
 export const aggregateAttempt = ({ level, attempt, questions, responses }) => {
   const ordered = [...responses].sort((a, b) => new Date(a.answeredAt) - new Date(b.answeredAt));
+  const questionById = new Map(questions.map(q => [String(q._id), q]));
 
   let totalPoints = 0;
   let correctCount = 0;
-  let wrongCount = 0;
+  let cumulativeDamage = 0;
   let activeMs = 0;
   let hiddenMs = 0;
   const missedQuestionIds = [];
@@ -139,9 +134,10 @@ export const aggregateAttempt = ({ level, attempt, questions, responses }) => {
     if (response.isCorrect) {
       correctCount += 1;
     } else {
-      wrongCount += 1;
       missedQuestionIds.push(String(response.questionId));
     }
+    const question = questionById.get(String(response.questionId));
+    cumulativeDamage += responseDamage(question?.points, response.partialScore);
     const itemMs = new Date(response.answeredAt) - new Date(response.shownAt) - (response.hiddenMs || 0);
     activeMs += Math.max(0, itemMs);
     hiddenMs += response.hiddenMs || 0;
@@ -153,7 +149,7 @@ export const aggregateAttempt = ({ level, attempt, questions, responses }) => {
   const score = totalPoints + streakBonus;
   const passed = accuracy >= level.passMark;
   const starsAwarded = computeStars({ accuracy, passed, kind: attempt.kind });
-  const vitalsEnd = computeVitalsEnd(wrongCount);
+  const vitalsEnd = vitalsFromDamage(cumulativeDamage);
 
   return { score, accuracy, passed, starsAwarded, vitalsEnd, activeMs, hiddenMs, streakBonus, missedQuestionIds };
 };

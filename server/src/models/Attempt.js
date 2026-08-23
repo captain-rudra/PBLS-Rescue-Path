@@ -22,4 +22,23 @@ const attemptSchema = new mongoose.Schema({
   status: { type: String, enum: [STATUS.IN_PROGRESS, STATUS.SUBMITTED, STATUS.ABANDONED, STATUS.KICKED], default: STATUS.IN_PROGRESS }
 }, { timestamps: true, collection: "attempts" });
 
+// Two independent invariants, each backstopping a real race in
+// server/src/routes/play/attempts.js — the idempotency check there is a
+// plain read with no locking, so two concurrent requests can each pass it
+// before either has written:
+//
+// 1. No two attempts for the same participant+level may ever share an
+//    attemptNo (protects the reported "attempts per level" counter).
+attemptSchema.index({ participantId: 1, levelId: 1, attemptNo: 1 }, { unique: true });
+
+// 2. At most one attempt per participant+level may be in_progress at a
+//    time — this is the one that actually matters for idempotency. Index 1
+//    alone does not catch it: if request B's "does one exist?" check runs
+//    before request A's insert lands, but B's own insert lands after A's,
+//    B computes a *different*, higher attemptNo than A and never collides
+//    with it on index 1 — two genuinely different in_progress rows for the
+//    same level, no duplicate-key error to catch. A partial index scoped to
+//    status is the only thing that closes that gap regardless of timing.
+attemptSchema.index({ participantId: 1, levelId: 1 }, { unique: true, partialFilterExpression: { status: STATUS.IN_PROGRESS } });
+
 export default mongoose.models.Attempt || mongoose.model("Attempt", attemptSchema);

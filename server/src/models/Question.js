@@ -7,7 +7,7 @@ const feedbackSchema = new mongoose.Schema({ text: { type: String, required: tru
 const bucketSchema = new mongoose.Schema({ key: { type: String, required: true }, label: { type: String, required: true } }, { _id: false });
 const itemSchema = new mongoose.Schema({ id: { type: String, required: true }, text: { type: String, required: true }, bucket: String }, { _id: false });
 const hotspotSchema = new mongoose.Schema({ tStart: Number, tEnd: Number, x: Number, y: Number, r: Number, isError: Boolean, label: String }, { _id: false });
-const sideSchema = new mongoose.Schema({ videoUrl: String, parameters: [String] }, { _id: false });
+const sideSchema = new mongoose.Schema({ label: String, videoUrl: String, parameters: [String] }, { _id: false });
 
 const questionSchema = new mongoose.Schema({
   levelId: { type: mongoose.Schema.Types.ObjectId, ref: "Level", required: true },
