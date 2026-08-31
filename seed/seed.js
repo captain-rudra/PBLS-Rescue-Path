@@ -1,12 +1,33 @@
+import dotenv from "dotenv";
+import mongoose from "mongoose";
+import Level from "../server/src/models/Level.js";
+import Question from "../server/src/models/Question.js";
 import levels from "./levels.json" with { type: "json" };
 import questions from "./questions.json" with { type: "json" };
 import { LEVEL_KEYS, QUESTION_TYPES } from "../shared/constants.js";
 
-let mongoose;
+// Top-level field names the schema actually knows about. Mongoose silently
+// drops any other key on write (`strict: true`), so a drop-in that adds a
+// field the model was never taught — the sideSchema.label class of bug —
+// would persist a partial document with no error. Compare against this and
+// fail loudly instead.
+const schemaTopLevelKeys = schema => {
+  const keys = new Set();
+  schema.eachPath(path => keys.add(path.split(".")[0]));
+  return keys;
+};
+const KNOWN_LEVEL_KEYS = schemaTopLevelKeys(Level.schema);
+const KNOWN_QUESTION_KEYS = schemaTopLevelKeys(Question.schema);
+
+const rejectUnknownKeys = (label, object, knownKeys) => {
+  const unknown = Object.keys(object).filter(key => !knownKeys.has(key));
+  if (unknown.length) throw new Error(`${label} has field(s) not in its Mongoose schema — they would be silently dropped on write: ${unknown.join(", ")}`);
+};
 
 const validate = () => {
   const levelMap = new Map(levels.map(level => [level.key, level]));
   if (levels.length !== LEVEL_KEYS.length || LEVEL_KEYS.some(key => !levelMap.has(key))) throw new Error("Seed levels do not match LEVEL_KEYS");
+  for (const level of levels) rejectUnknownKeys(`Level ${level.key}`, level, KNOWN_LEVEL_KEYS);
   const keys = new Set();
   const preparedQuestions = questions.map(question => ({
     ...question,
@@ -19,6 +40,7 @@ const validate = () => {
     const uniqueKey = `${question.levelKey}:${question.sequence}`;
     if (keys.has(uniqueKey)) throw new Error(`Duplicate question key: ${uniqueKey}`);
     keys.add(uniqueKey);
+    rejectUnknownKeys(`Question ${uniqueKey}`, question, KNOWN_QUESTION_KEYS);
     const level = levelMap.get(question.levelKey);
     if (!level) throw new Error(`Unknown level: ${question.levelKey}`);
     if (!QUESTION_TYPES.includes(question.type)) throw new Error(`Unknown question type: ${question.type}`);
@@ -35,13 +57,6 @@ const seed = async () => {
     console.log(`Seed validation passed: ${levels.length} levels, ${questionCount} questions`);
     return;
   }
-  const [{ default: dotenv }, mongooseModule, { default: Level }, { default: Question }] = await Promise.all([
-    import("dotenv"),
-    import("mongoose"),
-    import("../server/src/models/Level.js"),
-    import("../server/src/models/Question.js")
-  ]);
-  mongoose = mongooseModule.default;
   dotenv.config();
   await mongoose.connect(process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/pbls_rescue_path");
   const levelIds = new Map();

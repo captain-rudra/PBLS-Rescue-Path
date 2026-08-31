@@ -6,9 +6,15 @@
 // least something: one token wrong out of six costs ceil(7 * 1/6) = 2, not
 // the full 7. Both sides must import this — a client-only or server-only
 // reimplementation is how the HUD and the stored figure end up disagreeing.
+//
+// The bar is live feedback only: it no longer triggers a restart at any
+// threshold (a level always runs to completion; pass/fail is decided at
+// submit by accuracy against the level's pass mark, not mid-level by this
+// bar — see docs/SPEC.md 2.3). VITALS_CRITICAL_THRESHOLD only names the
+// point at which the HUD colors itself "critical".
 export const VITALS_BAND_COST = 7;
-export const VITALS_RESTART_BANDS = 3;
-export const VITALS_RESTART_THRESHOLD = VITALS_BAND_COST * VITALS_RESTART_BANDS; // 21
+export const VITALS_CRITICAL_BANDS = 3;
+export const VITALS_CRITICAL_THRESHOLD = VITALS_BAND_COST * VITALS_CRITICAL_BANDS; // 21
 
 /** Damage (0-7) a single response costs the vitals bar. */
 export const responseDamage = (maxPoints, partialScore) => {

@@ -9,7 +9,9 @@ const levelSchema = new mongoose.Schema({
   role: { type: String, required: true, trim: true },
   objectives: { type: [String], required: true, validate: value => value.length > 0 },
   passMark: { type: Number, required: true, min: 0, max: 100 },
-  badge: { type: String, required: true, trim: true },
+  // Optional: the corrected source document gives the prelevel no badge.
+  // A schema that rejects that valid state is the thing that's wrong.
+  badge: { type: String, required: false, trim: true, default: null },
   status: { type: String, enum: Object.values(STATUS), default: STATUS.DRAFT },
   authoringNote: String,
   deletedAt: { type: Date, default: null }

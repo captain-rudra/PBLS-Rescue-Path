@@ -19,11 +19,12 @@ router.get("/", async (request, response) => {
     }),
     Question.aggregate([
       { $match: { levelKey: { $in: levels.map(l => l.key) }, status: { $in: [STATUS.PUBLISHED, STATUS.LOCKED] }, deletedAt: null } },
-      { $group: { _id: "$levelKey", count: { $sum: 1 } } }
+      { $group: { _id: "$levelKey", count: { $sum: 1 }, types: { $addToSet: "$type" } } }
     ])
   ]);
 
   const questionCountByKey = new Map(questionCounts.map(c => [c._id, c.count]));
+  const formatsByKey = new Map(questionCounts.map(c => [c._id, c.types.sort()]));
   const attemptsByLevelId = new Map();
   for (const attempt of attempts) {
     const key = String(attempt.levelId);
@@ -34,7 +35,7 @@ router.get("/", async (request, response) => {
   const progress = computeLevelProgress(levels, attemptsByLevelId);
 
   response.json({
-    levels: progress.map(({ level, state, starsAwarded }) => ({
+    levels: progress.map(({ level, state, starsAwarded, headline, restartCount, remediationCount }) => ({
       levelId: String(level._id),
       key: level.key,
       order: level.order,
@@ -43,9 +44,14 @@ router.get("/", async (request, response) => {
       role: level.role,
       badge: level.badge,
       passMark: level.passMark,
+      objectives: level.objectives,
       questionCount: questionCountByKey.get(level.key) || 0,
+      formats: formatsByKey.get(level.key) || [],
       state,
-      starsAwarded
+      starsAwarded,
+      headline,
+      restartCount,
+      remediationCount
     }))
   });
 });

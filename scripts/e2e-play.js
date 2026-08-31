@@ -1,7 +1,20 @@
-// Step 2a end-to-end check for the gameplay API. Exercises the real HTTP
-// routes (never calls scoring.js directly) against a throwaway participant
-// and session, using seeded prelevel/l1 content. Requires `npm run seed`
-// to have been run against MONGODB_URI first.
+// End-to-end check for the gameplay API and its progression mechanic.
+// Exercises the real HTTP routes (never calls scoring.js directly) against
+// throwaway participant/session/admin documents, using seeded
+// prelevel/l1 content. Requires `npm run seed` to have been run against
+// MONGODB_URI first.
+//
+// Covers the three submit outcomes (docs/SPEC.md 2.3/2.7):
+//   - mastered  : accuracy 100% on the first try -> next level unlocks,
+//                 3 stars, zero restarts/remediation rounds
+//   - fail      : accuracy below the pass mark -> the WHOLE level restarts
+//                 from question 1 (not just the missed items)
+//   - remediate : accuracy at/above the pass mark but short of 100% ->
+//                 another round over just what was missed, repeating until
+//                 100% is reached
+// and the frozen-headline rule: no matter how many restarts or remediation
+// rounds follow, the level's displayed score/accuracy/stars stay pinned to
+// attemptNo 1 forever.
 //
 // Usage: node scripts/e2e-play.js   (or: npm run test:play --workspace server)
 
@@ -12,6 +25,7 @@ import Level from "../server/src/models/Level.js";
 import Question from "../server/src/models/Question.js";
 import Session from "../server/src/models/Session.js";
 import Participant from "../server/src/models/Participant.js";
+import Admin from "../server/src/models/Admin.js";
 import Attempt from "../server/src/models/Attempt.js";
 import Response from "../server/src/models/Response.js";
 
@@ -22,7 +36,11 @@ const correctGivenFor = question => {
     return { placements: Object.fromEntries(question.items.map(item => [item.id, item.bucket])) };
   }
   if (question.type === "sequence") {
-    return { order: [...question.correctOrder] };
+    // shownOrder simulates the client's seeded pre-shuffle (SPEC 3.3) — any
+    // permutation works here since this harness isn't testing the shuffle
+    // itself, only that the server records and requires it.
+    const shownOrder = [...question.correctOrder.slice(1), question.correctOrder[0]];
+    return { order: [...question.correctOrder], shownOrder };
   }
   return { selected: question.correct };
 };
@@ -34,7 +52,8 @@ const wrongGivenFor = question => {
   }
   if (question.type === "sequence") {
     const order = question.correctOrder;
-    return { order: [...order.slice(1), order[0]] }; // cyclic shift: fixed-point-free for distinct ids
+    const shownOrder = [...order.slice(1), order[0]];
+    return { order: [...order.slice(1), order[0]], shownOrder }; // cyclic shift: fixed-point-free for distinct ids
   }
   const wrongKey = question.options.map(o => o.key).find(k => k !== question.correct);
   return { selected: wrongKey };
@@ -43,8 +62,16 @@ const wrongGivenFor = question => {
 let server;
 let baseUrl;
 let participant;
+let admin;
 let session;
 const createdAttemptIds = [];
+
+// testHotspotVideoScored creates a throwaway published question at this
+// (levelKey, sequence) and deletes it again — the suite must never mutate
+// a real seeded item. Sequence is far outside anything the seed uses;
+// teardown sweeps it in case a hard kill skipped the test's own cleanup.
+const SCRATCH_QUESTION_LEVEL_KEY = "l2";
+const SCRATCH_QUESTION_SEQUENCE = 9999;
 
 const request = async (method, path, body) => {
   const res = await fetch(`${baseUrl}${path}`, {
@@ -56,7 +83,10 @@ const request = async (method, path, body) => {
   return { status: res.status, body: json };
 };
 
-const answerAllQuestions = async (attemptId, questions, correctCount) => {
+// `correctCount` of the questions (in serving order) are answered right,
+// the rest wrong. No question type needs special-casing for "wrong": every
+// wrongGivenFor is deliberately not the correct answer.
+const answerQuestions = async (attemptId, questions, correctCount) => {
   for (const [index, question] of questions.entries()) {
     const shownAt = new Date();
     const firstInteractionAt = new Date(shownAt.getTime() + 300);
@@ -79,6 +109,27 @@ const answerAllQuestions = async (attemptId, questions, correctCount) => {
   }
 };
 
+// Drives one level to a clean 100% through the real HTTP routes and
+// returns the served questions plus the submit body. Assumes the prior
+// level is already mastered for the current participant, so this one is
+// unlocked. `expectedPublishedCount`, when given, asserts exactly how many
+// questions the level serves — draft items must never be among them.
+const masterLevel = async (levelKey, expectedPublishedCount) => {
+  const created = await request("POST", "/play/attempts", { levelKey, kind: "first" });
+  assert.equal(created.status, 201, `POST /play/attempts ${levelKey}: ${JSON.stringify(created.body)}`);
+  const { attempt, questions } = created.body;
+  if (expectedPublishedCount != null) {
+    assert.equal(questions.length, expectedPublishedCount, `${levelKey} must serve ${expectedPublishedCount} published questions, got ${questions.length}`);
+  }
+  for (const q of questions) assert.equal(q.correct, undefined, "player payload must never include the answer key");
+  await answerQuestions(attempt.attemptId, questions, questions.length);
+  const submitted = await request("POST", `/play/attempts/${attempt.attemptId}/submit`);
+  assert.equal(submitted.status, 200, `submit ${levelKey}: ${JSON.stringify(submitted.body)}`);
+  assert.equal(submitted.body.outcome, "mastered", `${levelKey} at 100% must be 'mastered', got '${submitted.body.outcome}'`);
+  assert.equal(submitted.body.attempt.accuracy, 100);
+  return { attempt, questions, submitted: submitted.body };
+};
+
 const setup = async () => {
   await connectDB();
 
@@ -86,10 +137,14 @@ const setup = async () => {
   const l1 = await Level.findOne({ key: "l1", deletedAt: null });
   assert.ok(prelevel && l1, "seed data missing: run `npm run seed` first");
 
+  // Belt-and-braces: drop any scratch question a previously hard-killed
+  // run left behind, so the coverage sweep sees the true published counts.
+  await Question.deleteMany({ levelKey: SCRATCH_QUESTION_LEVEL_KEY, sequence: SCRATCH_QUESTION_SEQUENCE });
+
   session = await Session.create({
     mode: "open",
     capacity: 1,
-    levelKeys: ["prelevel", "l1", "l2"],
+    levelKeys: ["prelevel", "l1", "l2", "l3", "l4"],
     showTimer: true
   });
 
@@ -99,23 +154,33 @@ const setup = async () => {
     sessionId: session._id
   });
 
+  admin = await Admin.create({
+    email: `e2e-admin-${Date.now()}@example.test`,
+    passwordHash: "not-a-real-hash",
+    name: "E2E Admin",
+    role: "super_admin"
+  });
+
   process.env.DEV_PARTICIPANT_ID = String(participant._id);
+  process.env.DEV_ADMIN_ID = String(admin._id);
 
   const app = createApp();
   server = app.listen(0);
   await new Promise(resolve => server.once("listening", resolve));
   const { port } = server.address();
   baseUrl = `http://127.0.0.1:${port}`;
-  log(`server up on ${baseUrl}, participant ${participant.code}`);
+  log(`server up on ${baseUrl}, participant ${participant.code}, admin ${admin.email}`);
 };
 
 const teardown = async () => {
   if (server) await new Promise(resolve => server.close(resolve));
+  await Question.deleteMany({ levelKey: SCRATCH_QUESTION_LEVEL_KEY, sequence: SCRATCH_QUESTION_SEQUENCE });
   if (participant) {
     await Response.deleteMany({ participantId: participant._id });
     await Attempt.deleteMany({ participantId: participant._id });
     await Participant.deleteOne({ _id: participant._id });
   }
+  if (admin) await Admin.deleteOne({ _id: admin._id });
   if (session) await Session.deleteOne({ _id: session._id });
   await disconnectDB();
 };
@@ -126,88 +191,354 @@ const testLevelsInitialState = async () => {
   const prelevel = body.levels.find(l => l.key === "prelevel");
   const l1 = body.levels.find(l => l.key === "l1");
   assert.equal(prelevel.state, "active", "prelevel must be active with no attempts yet");
-  assert.equal(l1.state, "locked", "l1 must be locked until prelevel is passed");
+  assert.equal(l1.state, "locked", "l1 must be locked until prelevel is mastered");
+  assert.equal(prelevel.starsAwarded, 0);
+  assert.equal(prelevel.headline, null);
   log("GET /play/levels initial state OK");
 };
 
-const testPassPrelevel = async () => {
+// Outcome 1: a clean 100% on the very first try.
+const testCleanFirstTryMastery = async () => {
   const created = await request("POST", "/play/attempts", { levelKey: "prelevel", kind: "first" });
   assert.equal(created.status, 201, JSON.stringify(created.body));
   const { attempt, questions } = created.body;
   createdAttemptIds.push(attempt.attemptId);
   assert.equal(questions.length, 10);
+  assert.equal(attempt.remediationRound, 0, "a kind:first attempt is never a remediation round");
   for (const q of questions) assert.equal(q.correct, undefined, "player payload must never include the answer key");
 
-  await answerAllQuestions(attempt.attemptId, questions, questions.length);
+  await answerQuestions(attempt.attemptId, questions, questions.length);
 
   const submitted = await request("POST", `/play/attempts/${attempt.attemptId}/submit`);
   assert.equal(submitted.status, 200, JSON.stringify(submitted.body));
-  assert.equal(submitted.body.attempt.passed, true);
+  assert.equal(submitted.body.outcome, "mastered");
   assert.equal(submitted.body.attempt.accuracy, 100);
-  assert.equal(submitted.body.attempt.starsAwarded, 3);
-  assert.equal(submitted.body.remediation.required, false);
+  assert.equal(submitted.body.headline.accuracy, 100);
+  assert.equal(submitted.body.headline.starsAwarded, 3, "a clean first-try 100% must earn 3 stars");
+  assert.equal(submitted.body.restartCount, 0);
+  assert.equal(submitted.body.remediationCount, 0);
   assert.equal(submitted.body.unlockedNextLevelKey, "l1");
-  log(`prelevel passed: score=${submitted.body.attempt.score} stars=${submitted.body.attempt.starsAwarded}`);
+  assert.deepEqual(submitted.body.headline.missedItems, []);
+  log(`prelevel mastered clean: score=${submitted.body.attempt.score} stars=${submitted.body.headline.starsAwarded}`);
 
   const doubleSubmit = await request("POST", `/play/attempts/${attempt.attemptId}/submit`);
   assert.equal(doubleSubmit.status, 409, "resubmitting a submitted attempt must be refused");
 
   const { body: levels } = await request("GET", "/play/levels");
-  assert.equal(levels.levels.find(l => l.key === "prelevel").state, "complete");
+  const prelevelLevel = levels.levels.find(l => l.key === "prelevel");
+  assert.equal(prelevelLevel.state, "complete");
+  assert.equal(prelevelLevel.starsAwarded, 3);
   assert.equal(levels.levels.find(l => l.key === "l1").state, "active");
-  log("GET /play/levels after pass: l1 unlocked OK");
+  log("GET /play/levels after mastery: l1 unlocked OK");
 };
 
-const testFailAndRemediateL1 = async () => {
-  const created = await request("POST", "/play/attempts", { levelKey: "l1", kind: "first" });
-  assert.equal(created.status, 201, JSON.stringify(created.body));
-  const { attempt, questions } = created.body;
-  createdAttemptIds.push(attempt.attemptId);
-  assert.equal(questions.length, 9, "l1 Q9 is a draft stub and must not be served");
+// The vitals-restart mechanic was removed entirely (SPEC 2.3): answering
+// many questions wrong in a row must never interrupt an attempt anymore.
+// This deliberately exceeds the old 21-damage/3-full-wrong threshold. Uses
+// its own throwaway participant so it doesn't consume l1's attemptNo
+// sequence relied on by the tests below.
+const testNoMidLevelRestart = async () => {
+  const scratchParticipant = await Participant.create({ code: `E2E-RESTART-${Date.now()}`, arm: "E", sessionId: session._id });
+  const savedDevId = process.env.DEV_PARTICIPANT_ID;
+  process.env.DEV_PARTICIPANT_ID = String(scratchParticipant._id);
+  try {
+    // This participant needs prelevel mastered first, purely so l1 is
+    // unlocked for them — unrelated to what this test is actually checking.
+    const prelevelAttempt = await request("POST", "/play/attempts", { levelKey: "prelevel", kind: "first" });
+    assert.equal(prelevelAttempt.status, 201, JSON.stringify(prelevelAttempt.body));
+    await answerQuestions(prelevelAttempt.body.attempt.attemptId, prelevelAttempt.body.questions, prelevelAttempt.body.questions.length);
+    const prelevelSubmit = await request("POST", `/play/attempts/${prelevelAttempt.body.attempt.attemptId}/submit`);
+    assert.equal(prelevelSubmit.status, 200, JSON.stringify(prelevelSubmit.body));
+    assert.equal(prelevelSubmit.body.outcome, "mastered");
 
-  // Only the first item correct -> well under the 80% pass mark.
-  await answerAllQuestions(attempt.attemptId, questions, 1);
+    const created = await request("POST", "/play/attempts", { levelKey: "l1", kind: "first" });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const { attempt, questions } = created.body;
+    assert.equal(questions.length, 9, "l1 Q9 is a draft stub and must not be served");
+    assert.ok(questions.length >= 5, "need at least 5 questions to exceed the old 3-wrong-answer threshold");
 
-  const submitted = await request("POST", `/play/attempts/${attempt.attemptId}/submit`);
-  assert.equal(submitted.status, 200, JSON.stringify(submitted.body));
-  assert.equal(submitted.body.attempt.passed, false);
-  assert.equal(submitted.body.attempt.starsAwarded, 0);
-  assert.equal(submitted.body.remediation.required, true);
-  assert.equal(submitted.body.remediation.questionIds.length, questions.length - 1);
-  assert.equal(submitted.body.unlockedNextLevelKey, null);
-  log(`l1 failed as expected: accuracy=${submitted.body.attempt.accuracy}% remediation items=${submitted.body.remediation.questionIds.length}`);
+    // Answer the first 5 wrong (old code would have force-restarted after
+    // the 3rd) and confirm every single response is still accepted normally.
+    for (const question of questions.slice(0, 5)) {
+      const rawQuestion = await Question.findById(question.questionId);
+      const res = await request("POST", "/play/responses", {
+        attemptId: attempt.attemptId,
+        questionId: question.questionId,
+        given: wrongGivenFor(rawQuestion),
+        shownAt: new Date().toISOString(),
+        answeredAt: new Date(Date.now() + 500).toISOString()
+      });
+      assert.equal(res.status, 201, `response must be accepted even past the old restart threshold: ${JSON.stringify(res.body)}`);
+    }
+
+    const attemptAfter = await Attempt.findById(attempt.attemptId);
+    assert.equal(attemptAfter.status, "in_progress", "5 wrong answers must not abandon or restart the attempt");
+    log("no mid-level restart after 5 consecutive wrong answers OK (vitals bar is display-only now)");
+  } finally {
+    process.env.DEV_PARTICIPANT_ID = savedDevId;
+    await Response.deleteMany({ participantId: scratchParticipant._id });
+    await Attempt.deleteMany({ participantId: scratchParticipant._id });
+    await Participant.deleteOne({ _id: scratchParticipant._id });
+  }
+};
+
+// Shared setup for the two concurrency regression tests below: a fresh
+// scratch participant, driven (via the real HTTP routes) to exactly the
+// state the bug report described — l1 attemptNo 1 and 2 already
+// submitted, attemptNo 3 (a remediation round) about to be created.
+// Leaves DEV_PARTICIPANT_ID pointed at the scratch participant; caller is
+// responsible for restoring it and deleting the scratch data.
+const setupL1AboutToCreateAttemptNo3 = async () => {
+  const scratchParticipant = await Participant.create({ code: `E2E-RACE-${Date.now()}`, arm: "E", sessionId: session._id });
+  process.env.DEV_PARTICIPANT_ID = String(scratchParticipant._id);
+
+  const prelevelAttempt = await request("POST", "/play/attempts", { levelKey: "prelevel", kind: "first" });
+  assert.equal(prelevelAttempt.status, 201, JSON.stringify(prelevelAttempt.body));
+  await answerQuestions(prelevelAttempt.body.attempt.attemptId, prelevelAttempt.body.questions, prelevelAttempt.body.questions.length);
+  const prelevelSubmit = await request("POST", `/play/attempts/${prelevelAttempt.body.attempt.attemptId}/submit`);
+  assert.equal(prelevelSubmit.status, 200, JSON.stringify(prelevelSubmit.body));
+
+  const attempt1 = await request("POST", "/play/attempts", { levelKey: "l1", kind: "first" }); // attemptNo 1
+  assert.equal(attempt1.status, 201, JSON.stringify(attempt1.body));
+  await answerQuestions(attempt1.body.attempt.attemptId, attempt1.body.questions, 1); // fail
+  const submit1 = await request("POST", `/play/attempts/${attempt1.body.attempt.attemptId}/submit`);
+  assert.equal(submit1.status, 200, JSON.stringify(submit1.body));
+  assert.equal(submit1.body.outcome, "fail");
+
+  const attempt2 = await request("POST", "/play/attempts", { levelKey: "l1", kind: "first" }); // attemptNo 2
+  assert.equal(attempt2.status, 201, JSON.stringify(attempt2.body));
+  assert.equal(attempt2.body.attempt.attemptNo, 2);
+  await answerQuestions(attempt2.body.attempt.attemptId, attempt2.body.questions, 8); // remediate-eligible
+  const submit2 = await request("POST", `/play/attempts/${attempt2.body.attempt.attemptId}/submit`);
+  assert.equal(submit2.status, 200, JSON.stringify(submit2.body));
+  assert.equal(submit2.body.outcome, "remediate");
+
+  return scratchParticipant;
+};
+
+const cleanupScratchParticipant = async (scratchParticipant, savedDevId) => {
+  process.env.DEV_PARTICIPANT_ID = savedDevId;
+  await Response.deleteMany({ participantId: scratchParticipant._id });
+  await Attempt.deleteMany({ participantId: scratchParticipant._id });
+  await Participant.deleteOne({ _id: scratchParticipant._id });
+};
+
+// Regression test for a real runtime bug: MongoDB threw E11000 on the
+// (participantId, levelId, attemptNo) unique index while creating
+// attemptNo 3 during real manual play. Root cause: attemptNo is assigned
+// by counting existing attempts and adding one — a check-then-insert race.
+// Fires several genuinely concurrent requests at the exact "about to
+// create attemptNo 3" state and asserts every one resolves cleanly to the
+// SAME attempt, with no duplicate row — real E11000 collisions do occur
+// here (confirmed while developing this fix), and every one must recover.
+const testConcurrentAttemptCreationNoDuplicateKey = async () => {
+  const savedDevId = process.env.DEV_PARTICIPANT_ID;
+  const scratchParticipant = await setupL1AboutToCreateAttemptNo3();
+  try {
+    const CONCURRENCY = 6;
+    const results = await Promise.all(
+      Array.from({ length: CONCURRENCY }, () => request("POST", "/play/attempts", { levelKey: "l1", kind: "remediation" }))
+    );
+
+    for (const r of results) {
+      assert.ok(r.status === 200 || r.status === 201, `every concurrent create must resolve cleanly, not 500/E11000: ${r.status} ${JSON.stringify(r.body)}`);
+    }
+    const attemptIds = new Set(results.map(r => r.body.attempt.attemptId));
+    assert.equal(attemptIds.size, 1, `all ${CONCURRENCY} concurrent requests must converge on the SAME attempt, got ${attemptIds.size} distinct ids`);
+
+    const [singleAttemptId] = attemptIds;
+    const dbAttempts = await Attempt.find({ participantId: scratchParticipant._id, kind: "remediation" });
+    assert.equal(dbAttempts.length, 1, "exactly one remediation attempt document must exist — no duplicate row from the race");
+    assert.equal(String(dbAttempts[0]._id), singleAttemptId);
+    assert.equal(dbAttempts[0].attemptNo, 3);
+
+    log(`${CONCURRENCY} concurrent POST /play/attempts at attemptNo 3 converged on one attempt, no E11000 escaped, no duplicate row`);
+  } finally {
+    await cleanupScratchParticipant(scratchParticipant, savedDevId);
+  }
+};
+
+// Deterministic regression test for the SPECIFIC gap in the old recovery:
+// it caught E11000 once and looked for an in_progress attempt to hand
+// back, assuming the race's winner was still in_progress. That assumption
+// isn't guaranteed — if the winner has already been submitted by the time
+// a stale duplicate request's create() collides, the old code's "find an
+// in_progress winner" lookup came back empty and the raw E11000 escaped
+// as an unhandled 500. A genuine timing race can't be relied on to
+// reproduce this deterministically, so this test engineers the exact
+// sequence directly: a request that read the attempt count BEFORE
+// attemptNo 3 existed only gets around to inserting AFTER attemptNo 3 has
+// already been created AND fully submitted. `Attempt.countDocuments` is
+// monkey-patched for exactly one call to return that stale, pre-captured
+// count — everything else about the request goes through the real route.
+const testStaleAttemptCountAfterWinnerAlreadySubmitted = async () => {
+  const savedDevId = process.env.DEV_PARTICIPANT_ID;
+  const scratchParticipant = await setupL1AboutToCreateAttemptNo3();
+  try {
+    const l1 = await Level.findOne({ key: "l1", deletedAt: null });
+    const staleCount = await Attempt.countDocuments({ participantId: scratchParticipant._id, levelId: l1._id });
+    assert.equal(staleCount, 2, "sanity: exactly attemptNo 1 and 2 exist before the winner is created");
+
+    // Real winner: creates attemptNo 3, then answer + submit it fully —
+    // it is no longer in_progress by the time the stale request runs.
+    const winner = await request("POST", "/play/attempts", { levelKey: "l1", kind: "remediation" });
+    assert.equal(winner.status, 201, JSON.stringify(winner.body));
+    assert.equal(winner.body.attempt.attemptNo, 3);
+    await answerQuestions(winner.body.attempt.attemptId, winner.body.questions, 0); // stays eligible for further remediation
+    const winnerSubmit = await request("POST", `/play/attempts/${winner.body.attempt.attemptId}/submit`);
+    assert.equal(winnerSubmit.status, 200, JSON.stringify(winnerSubmit.body));
+    assert.equal(winnerSubmit.body.attempt.status, "submitted");
+
+    // The stale request: its own attemptNo computation is forced to the
+    // pre-captured value (2 -> attemptNo 3), which now collides with the
+    // already-submitted attemptNo 3 above. One-shot: restores itself
+    // immediately, so nothing else observes the patched behaviour.
+    const realCountDocuments = Attempt.countDocuments.bind(Attempt);
+    Attempt.countDocuments = async (...args) => {
+      Attempt.countDocuments = realCountDocuments;
+      return staleCount;
+    };
+
+    const staleResult = await request("POST", "/play/attempts", { levelKey: "l1", kind: "remediation" });
+    Attempt.countDocuments = realCountDocuments; // belt-and-braces in case the route never called it (e.g. short-circuited)
+
+    assert.ok(
+      staleResult.status === 200 || staleResult.status === 201,
+      `a stale attemptNo collision against an already-submitted attempt must not surface a raw E11000/500: ${staleResult.status} ${JSON.stringify(staleResult.body)}`
+    );
+    assert.equal(staleResult.body.attempt.attemptNo, 4, "must recompute a fresh attemptNo (4), not retry the stale, already-taken 3");
+
+    const dbAttempts = await Attempt.find({ participantId: scratchParticipant._id, levelId: l1._id }).sort({ attemptNo: 1 });
+    assert.equal(dbAttempts.length, 4);
+    assert.deepEqual(dbAttempts.map(a => a.attemptNo), [1, 2, 3, 4], "no duplicate attemptNo, no gap");
+
+    log("stale attemptNo collision against an already-submitted winner correctly recomputed attemptNo 4, no E11000 escaped");
+  } finally {
+    await cleanupScratchParticipant(scratchParticipant, savedDevId);
+  }
+};
+
+// Outcome 2 then repeated outcome 3: fail-and-restart, then remediate to
+// 100%. Also proves the frozen-headline rule: the level's displayed score
+// stays pinned to the original failing attemptNo:1 even after mastery.
+const testFailRestartThenRemediateToMastery = async () => {
+  // --- First attempt: 1/9 correct, well below the 80% pass mark -> fail.
+  const firstTry = await request("POST", "/play/attempts", { levelKey: "l1", kind: "first" });
+  assert.equal(firstTry.status, 201, JSON.stringify(firstTry.body));
+  createdAttemptIds.push(firstTry.body.attempt.attemptId);
+  assert.equal(firstTry.body.attempt.attemptNo, 1);
+
+  await answerQuestions(firstTry.body.attempt.attemptId, firstTry.body.questions, 1);
+  const firstSubmit = await request("POST", `/play/attempts/${firstTry.body.attempt.attemptId}/submit`);
+  assert.equal(firstSubmit.status, 200, JSON.stringify(firstSubmit.body));
+  assert.equal(firstSubmit.body.outcome, "fail");
+  assert.equal(firstSubmit.body.attempt.passed, false);
+  const originalScore = firstSubmit.body.attempt.score;
+  const originalAccuracy = firstSubmit.body.attempt.accuracy;
+  assert.ok(originalAccuracy < 80, "sanity: the first attempt must genuinely be below the pass mark");
+  log(`l1 attemptNo:1 failed as expected: accuracy=${originalAccuracy}%`);
 
   const { body: levelsAfterFail } = await request("GET", "/play/levels");
   assert.equal(levelsAfterFail.levels.find(l => l.key === "l1").state, "failed");
 
-  const remediationCreated = await request("POST", "/play/attempts", { levelKey: "l1", kind: "remediation" });
-  assert.equal(remediationCreated.status, 201, JSON.stringify(remediationCreated.body));
-  const remediationAttempt = remediationCreated.body.attempt;
-  const remediationQuestions = remediationCreated.body.questions;
-  createdAttemptIds.push(remediationAttempt.attemptId);
-  assert.equal(remediationQuestions.length, submitted.body.remediation.questionIds.length, "remediation must serve exactly the missed items");
-  const remediationIds = new Set(remediationQuestions.map(q => q.questionId));
-  for (const id of submitted.body.remediation.questionIds) assert.ok(remediationIds.has(id));
+  // A below-pass-mark attempt owes a full restart, not remediation.
+  const remediationTooSoon = await request("POST", "/play/attempts", { levelKey: "l1", kind: "remediation" });
+  assert.equal(remediationTooSoon.status, 400, "remediation must be refused right after a failed attempt");
 
-  await answerAllQuestions(remediationAttempt.attemptId, remediationQuestions, remediationQuestions.length);
-  const remediationSubmitted = await request("POST", `/play/attempts/${remediationAttempt.attemptId}/submit`);
-  assert.equal(remediationSubmitted.status, 200, JSON.stringify(remediationSubmitted.body));
-  assert.equal(remediationSubmitted.body.attempt.passed, true);
-  assert.equal(remediationSubmitted.body.attempt.starsAwarded, 1, "remediation pass always awards exactly one star");
-  assert.equal(remediationSubmitted.body.unlockedNextLevelKey, "l2");
-  log(`l1 remediation passed: stars=${remediationSubmitted.body.attempt.starsAwarded}`);
+  // --- Restart (kind: first again) -> the WHOLE level, not just misses.
+  const restart = await request("POST", "/play/attempts", { levelKey: "l1", kind: "first" });
+  assert.equal(restart.status, 201, JSON.stringify(restart.body));
+  createdAttemptIds.push(restart.body.attempt.attemptId);
+  assert.equal(restart.body.attempt.attemptNo, 2);
+  assert.equal(restart.body.questions.length, 9, "a restart must serve the full question set again, not just what was missed");
 
-  const { body: levelsAfterRemediation } = await request("GET", "/play/levels");
-  const l1Final = levelsAfterRemediation.levels.find(l => l.key === "l1");
+  // 8/9 correct: at/above the 80% pass mark but short of 100% -> remediate.
+  await answerQuestions(restart.body.attempt.attemptId, restart.body.questions, 8);
+  const restartSubmit = await request("POST", `/play/attempts/${restart.body.attempt.attemptId}/submit`);
+  assert.equal(restartSubmit.status, 200, JSON.stringify(restartSubmit.body));
+  assert.equal(restartSubmit.body.outcome, "remediate");
+  assert.equal(restartSubmit.body.attempt.passed, true);
+  assert.equal(restartSubmit.body.restartCount, 1, "one restart so far (attemptNo 2 beyond the original)");
+  assert.equal(restartSubmit.body.remediationCount, 0);
+  // The frozen headline must still be the ORIGINAL failing attempt, not
+  // this much-better restart.
+  assert.equal(restartSubmit.body.headline.accuracy, originalAccuracy, "headline must stay pinned to attemptNo 1, not the restart");
+  assert.equal(restartSubmit.body.headline.score, originalScore);
+  assert.equal(restartSubmit.body.headline.starsAwarded, 0, "the frozen first attempt was below 80%, so 0 stars even mid-remediation-chain");
+  const missedAfterRestart = restartSubmit.body.missedItems;
+  assert.equal(missedAfterRestart.length, 1, "8/9 correct leaves exactly one missed item");
+  log(`l1 restart (attemptNo 2) cleared the pass mark at ${restartSubmit.body.attempt.accuracy}%, 1 item still missed`);
+
+  const { body: levelsAfterRestart } = await request("GET", "/play/levels");
+  const l1AfterRestart = levelsAfterRestart.levels.find(l => l.key === "l1");
+  assert.equal(l1AfterRestart.state, "remediating");
+  assert.equal(l1AfterRestart.starsAwarded, 0, "dashboard stars also reflect the frozen (failing) first attempt");
+
+  // --- Remediation round 1: the single missed item, answered WRONG (0%).
+  // The pass mark does not apply to a remediation-kind attempt — this must
+  // stay "remediate" (another round over the same item), never "fail" /
+  // a full restart, no matter how low this round's own accuracy is.
+  const remediation1 = await request("POST", "/play/attempts", { levelKey: "l1", kind: "remediation" });
+  assert.equal(remediation1.status, 201, JSON.stringify(remediation1.body));
+  createdAttemptIds.push(remediation1.body.attempt.attemptId);
+  assert.equal(remediation1.body.attempt.attemptNo, 3);
+  assert.equal(remediation1.body.attempt.remediationRound, 1, "first remediation attempt for this level");
+  assert.equal(remediation1.body.questions.length, 1, "remediation must serve exactly the missed item");
+  assert.equal(remediation1.body.questions[0].questionId, missedAfterRestart[0].questionId);
+
+  await answerQuestions(remediation1.body.attempt.attemptId, remediation1.body.questions, 0);
+  const remediation1Submit = await request("POST", `/play/attempts/${remediation1.body.attempt.attemptId}/submit`);
+  assert.equal(remediation1Submit.status, 200, JSON.stringify(remediation1Submit.body));
+  assert.equal(remediation1Submit.body.attempt.accuracy, 0, "sanity: this round really did score 0%");
+  assert.equal(remediation1Submit.body.outcome, "remediate", "a remediation round below the pass mark must stay 'remediate', never 'fail'");
+  assert.equal(remediation1Submit.body.attempt.passed, true, "a remediation-kind attempt is never a restart trigger");
+  assert.equal(remediation1Submit.body.restartCount, 1, "0% on a remediation round must not count as another restart");
+  assert.equal(remediation1Submit.body.remediationCount, 1);
+  log(`l1 remediation round 1 scored 0% and correctly stayed in remediation (no restart)`);
+
+  const { body: levelsAfterRemediation1 } = await request("GET", "/play/levels");
+  assert.equal(levelsAfterRemediation1.levels.find(l => l.key === "l1").state, "remediating", "0% on a remediation round must not flip the dashboard to 'failed'");
+
+  // A below-pass-mark remediation round must still be eligible for ANOTHER
+  // remediation round (not blocked, and not requiring kind:"first").
+  const remediation2 = await request("POST", "/play/attempts", { levelKey: "l1", kind: "remediation" });
+  assert.equal(remediation2.status, 201, JSON.stringify(remediation2.body));
+  createdAttemptIds.push(remediation2.body.attempt.attemptId);
+  assert.equal(remediation2.body.attempt.attemptNo, 4);
+  assert.equal(remediation2.body.attempt.remediationRound, 2, "second remediation attempt for this level");
+  assert.equal(remediation2.body.questions.length, 1, "still just the one item, carried forward from the 0% round");
+  assert.equal(remediation2.body.questions[0].questionId, missedAfterRestart[0].questionId);
+
+  // --- Remediation round 2: answered correctly this time -> mastered.
+  await answerQuestions(remediation2.body.attempt.attemptId, remediation2.body.questions, 1);
+  const remediation2Submit = await request("POST", `/play/attempts/${remediation2.body.attempt.attemptId}/submit`);
+  assert.equal(remediation2Submit.status, 200, JSON.stringify(remediation2Submit.body));
+  assert.equal(remediation2Submit.body.outcome, "mastered");
+  assert.equal(remediation2Submit.body.attempt.accuracy, 100, "this round's own accuracy is 100");
+  assert.equal(remediation2Submit.body.restartCount, 1);
+  assert.equal(remediation2Submit.body.remediationCount, 2, "two remediation rounds happened, including the 0% one");
+  // Headline is STILL the original failing attempt, even now that the
+  // level is fully mastered — this is the frozen-headline rule.
+  assert.equal(remediation2Submit.body.headline.accuracy, originalAccuracy);
+  assert.equal(remediation2Submit.body.headline.score, originalScore);
+  assert.equal(remediation2Submit.body.headline.starsAwarded, 0);
+  assert.equal(remediation2Submit.body.headline.missedItems.length, 8, "headline missed items must be the ORIGINAL attempt's 8 misses, not this round's 0");
+  assert.equal(remediation2Submit.body.unlockedNextLevelKey, "l2");
+  log(`l1 mastered via remediation round 2; frozen headline stays at attemptNo:1's ${originalAccuracy}% / 0 stars`);
+
+  const { body: levelsAfterMastery } = await request("GET", "/play/levels");
+  const l1Final = levelsAfterMastery.levels.find(l => l.key === "l1");
   assert.equal(l1Final.state, "complete");
-  assert.equal(l1Final.starsAwarded, 1);
-  assert.equal(levelsAfterRemediation.levels.find(l => l.key === "l2").state, "active");
-  log("GET /play/levels after remediation: l1 complete, l2 unlocked OK");
+  assert.equal(l1Final.starsAwarded, 0, "mastering via remediation never retroactively improves the frozen stars");
+  assert.equal(l1Final.headline.accuracy, originalAccuracy);
+  assert.equal(l1Final.remediationCount, 2);
+  assert.equal(levelsAfterMastery.levels.find(l => l.key === "l2").state, "active");
+  log("GET /play/levels after mastery-via-remediation: l1 complete (0 stars, frozen), l2 unlocked OK");
 };
 
 const testIntegrityGuards = async () => {
   const noRemediation = await request("POST", "/play/attempts", { levelKey: "l1", kind: "remediation" });
-  assert.equal(noRemediation.status, 400, "remediation must be refused once nothing is missed");
+  assert.equal(noRemediation.status, 400, "remediation must be refused once the level is fully mastered");
 
   const restart = await request("POST", "/play/attempts", { levelKey: "prelevel", kind: "first" });
   assert.equal(restart.status, 201);
@@ -234,7 +565,190 @@ const testIntegrityGuards = async () => {
   assert.equal(otherRecords.body.records.length, 0, "a fresh participant must see none of another participant's records");
   await Participant.deleteOne({ _id: otherParticipant._id });
 
-  log("integrity guards OK (no remediation when nothing missed, incomplete submit blocked, bad shape blocked, records scoped per participant)");
+  log("integrity guards OK (no remediation once mastered, incomplete submit blocked, bad shape blocked, records scoped per participant)");
+};
+
+const testMeRecords = async () => {
+  const { status, body } = await request("GET", "/play/me/records");
+  assert.equal(status, 200);
+  assert.ok(body.records.length >= 4, "should have prelevel(mastered), l1(fail), l1(restart-remediate), l1(remediation-mastered) at least");
+  assert.ok(body.records.every(r => typeof r.score === "number"));
+  const l1Rows = body.records.filter(r => r.levelKey === "l1");
+  assert.ok(l1Rows.every(r => r.levelHeadline?.accuracy === l1Rows[0].levelHeadline.accuracy), "every row for a level must report the same frozen headline");
+  log(`GET /play/me/records: ${body.records.length} record(s) OK, per-level headline consistent`);
+};
+
+// "Admin sees the full end-to-end trail, question by question: which items
+// were missed on which attempt, in what order, with timings."
+const testAdminTrail = async () => {
+  const savedAdminId = process.env.DEV_ADMIN_ID;
+  delete process.env.DEV_ADMIN_ID;
+  const unauthorized = await request("GET", `/admin/records/trail?participantId=${participant._id}&levelKey=l1`);
+  assert.equal(unauthorized.status, 500, "the admin trail must not be reachable without an admin resolved");
+  process.env.DEV_ADMIN_ID = savedAdminId;
+
+  const { status, body } = await request("GET", `/admin/records/trail?participantId=${participant._id}&levelKey=l1`);
+  assert.equal(status, 200);
+  assert.equal(body.attempts.length, 4, "l1 trail must show all four attempts: fail, restart-remediate, remediate-at-0%, remediation-mastered");
+  assert.deepEqual(body.attempts.map(a => a.attemptNo), [1, 2, 3, 4]);
+  assert.deepEqual(body.attempts.map(a => a.outcome), ["fail", "remediate", "remediate", "mastered"]);
+  assert.deepEqual(body.attempts.map(a => a.kind), ["first", "first", "remediation", "remediation"]);
+  assert.deepEqual(body.attempts.map(a => a.remediationRound), [0, 0, 1, 2]);
+  assert.equal(body.attempts[0].responses.length, 9);
+  assert.equal(body.attempts[1].responses.length, 9);
+  assert.equal(body.attempts[2].responses.length, 1);
+  assert.equal(body.attempts[3].responses.length, 1);
+  // Every response carries question identity, correctness and all four
+  // SPEC 8 timestamps — the "question by question, with timings" trail.
+  for (const attempt of body.attempts) {
+    for (const r of attempt.responses) {
+      assert.ok(r.questionTitle, "trail response must resolve the question title");
+      assert.ok(typeof r.isCorrect === "boolean");
+      assert.ok(r.shownAt && r.answeredAt, "trail response must carry timing");
+    }
+  }
+  assert.equal(body.headline.accuracy, body.attempts[0].accuracy, "trail headline must match attemptNo 1, same frozen rule as everywhere else");
+  assert.equal(body.restartCount, 1);
+  assert.equal(body.remediationCount, 2);
+  log("GET /admin/records/trail OK: full 4-attempt, question-by-question trail with timings");
+};
+
+// Coverage sweep: every level played through to mastery, and every
+// question type that has a published seed item exercised end-to-end
+// through the real routes with real server-side scoring. The existing
+// tests above only ever touch prelevel and l1 (mcq, animation_mcq,
+// drag_drop, sequence) — this adds l2/l3/l4 and, with them, video_mcq and
+// split_screen, and checks the full unlock chain prelevel -> l4.
+const testEveryLevelAndQuestionType = async () => {
+  const scratchParticipant = await Participant.create({ code: `E2E-SWEEP-${Date.now()}`, arm: "E", sessionId: session._id });
+  const savedDevId = process.env.DEV_PARTICIPANT_ID;
+  process.env.DEV_PARTICIPANT_ID = String(scratchParticipant._id);
+  try {
+    // Published counts per level for the current seed: totals 10/10/21/21/8
+    // minus the 3 draft stubs (l1:9 drag_drop, l2:3 sequence, l2:18
+    // hotspot_video).
+    const plan = [
+      { key: "prelevel", published: 10, unlocks: "l1" },
+      { key: "l1", published: 9, unlocks: "l2" },
+      { key: "l2", published: 19, unlocks: "l3" },
+      { key: "l3", published: 21, unlocks: "l4" },
+      { key: "l4", published: 8, unlocks: null }
+    ];
+    const servedTypes = new Set();
+    const servedIds = [];
+    for (const step of plan) {
+      const { questions, submitted } = await masterLevel(step.key, step.published);
+      for (const q of questions) {
+        servedTypes.add(q.type);
+        servedIds.push(q.questionId);
+      }
+      assert.equal(submitted.unlockedNextLevelKey, step.unlocks, `${step.key} mastery must unlock ${step.unlocks ?? "nothing (last level)"}`);
+      if (step.key === "l3") {
+        assert.ok(questions.some(q => q.type === "split_screen"), "l3 must serve its split_screen item (l3:21)");
+      }
+      log(`${step.key} mastered: ${questions.length} questions, types ${[...new Set(questions.map(q => q.type))].sort().join("/")}`);
+    }
+
+    for (const type of ["mcq", "video_mcq", "animation_mcq", "drag_drop", "sequence", "split_screen"]) {
+      assert.ok(servedTypes.has(type), `question type '${type}' was never served end-to-end (served: ${[...servedTypes].sort().join(", ")})`);
+    }
+    // The seed's only hotspot_video (l2:18) is a draft stub — it must not
+    // leak into normal play. testHotspotVideoScored covers that type on a
+    // throwaway question it creates and deletes.
+    assert.ok(!servedTypes.has("hotspot_video"), "the draft hotspot_video stub (l2:18) must never be served through normal play");
+
+    const draftQuestions = await Question.find({ status: "draft" });
+    assert.equal(draftQuestions.length, 3, "seed must contain exactly 3 draft questions");
+    const draftIds = new Set(draftQuestions.map(q => String(q._id)));
+    assert.ok(servedIds.every(id => !draftIds.has(id)), "no draft question may ever be served to a play attempt");
+    assert.equal(servedIds.length, 10 + 9 + 19 + 21 + 8, "total questions served across all five levels must equal the published count");
+
+    log(`coverage sweep OK: all 5 levels mastered, unlock chain intact, types exercised: ${[...servedTypes].sort().join(", ")}`);
+  } finally {
+    process.env.DEV_PARTICIPANT_ID = savedDevId;
+    await Response.deleteMany({ participantId: scratchParticipant._id });
+    await Attempt.deleteMany({ participantId: scratchParticipant._id });
+    await Participant.deleteOne({ _id: scratchParticipant._id });
+  }
+};
+
+// The seventh type. The seed's only hotspot_video (l2:18) is a draft stub
+// (SPEC 13: hotspot coordinates can't be authored until the clip exists),
+// so it is never served through normal play — and a test must never touch
+// a document the study will use, so flipping that stub's status is out.
+// Instead this stands up its own throwaway published hotspot_video under
+// l2, plays it, and deletes it again. hotspot_video is scored exactly
+// like the mcq family — given.selected vs question.correct, via the
+// fallback option list (SPEC 3.5) — and this proves that path.
+const testHotspotVideoScored = async () => {
+  const l2 = await Level.findOne({ key: "l2", deletedAt: null });
+  assert.ok(l2, "seed data missing: l2 level not found");
+
+  // Clear any leftover from a previous hard-killed run before inserting.
+  await Question.deleteMany({ levelKey: SCRATCH_QUESTION_LEVEL_KEY, sequence: SCRATCH_QUESTION_SEQUENCE });
+
+  const scratchParticipant = await Participant.create({ code: `E2E-HOTSPOT-${Date.now()}`, arm: "E", sessionId: session._id });
+  const savedDevId = process.env.DEV_PARTICIPANT_ID;
+  process.env.DEV_PARTICIPANT_ID = String(scratchParticipant._id);
+  let scratchQuestion;
+  try {
+    scratchQuestion = await Question.create({
+      levelId: l2._id,
+      levelKey: SCRATCH_QUESTION_LEVEL_KEY,
+      sequence: SCRATCH_QUESTION_SEQUENCE,
+      type: "hotspot_video",
+      title: "[e2e-scratch] hotspot_video",
+      objective: l2.objectives[0],
+      prompt: "Which CPR component is incorrect? (e2e scratch item)",
+      media: { videoUrl: "https://example.test/e2e-scratch.mp4", gateOnFirstPlay: true },
+      fallbackText: "Fallback option list stands in for the clip in this e2e scratch item.",
+      hotspots: [{ tStart: 2, tEnd: 5, x: 0.5, y: 0.5, r: 0.1, isError: true, label: "depth" }],
+      options: [
+        { key: "A", text: "Rate is correct" },
+        { key: "B", text: "Depth is too shallow" },
+        { key: "C", text: "Recoil is complete" },
+        { key: "D", text: "Hand position is correct" }
+      ],
+      correct: "B",
+      feedback: { text: "Scratch feedback for the e2e hotspot_video item." },
+      points: 120,
+      status: "published",
+      version: 1
+    });
+
+    await masterLevel("prelevel", 10);
+    await masterLevel("l1", 9);
+
+    const created = await request("POST", "/play/attempts", { levelKey: "l2", kind: "first" });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const { attempt, questions } = created.body;
+    assert.equal(questions.length, 20, "l2 serves 19 published + the one scratch hotspot_video question");
+    const hotspot = questions.find(q => q.type === "hotspot_video");
+    assert.ok(hotspot, "the scratch hotspot_video question must be served");
+    assert.equal(hotspot.questionId, String(scratchQuestion._id), "the served hotspot must be the scratch question, not the real l2:18 stub");
+
+    await answerQuestions(attempt.attemptId, questions, questions.length);
+    const submitted = await request("POST", `/play/attempts/${attempt.attemptId}/submit`);
+    assert.equal(submitted.status, 200, JSON.stringify(submitted.body));
+    assert.equal(submitted.body.outcome, "mastered");
+
+    const hotspotResponse = await Response.findOne({ attemptId: attempt.attemptId, questionId: hotspot.questionId });
+    assert.ok(hotspotResponse, "the hotspot_video answer must have been recorded as a response");
+    assert.equal(hotspotResponse.isCorrect, true, "the server must have scored the hotspot_video answer correct");
+
+    // The real seeded stub was never touched.
+    const realStub = await Question.findOne({ levelKey: "l2", sequence: 18 });
+    assert.equal(realStub.status, "draft", "the real l2:18 hotspot_video stub must still be draft — the test must not have touched it");
+
+    log("hotspot_video scored end-to-end on a throwaway question (created and deleted, real l2:18 stub untouched)");
+  } finally {
+    if (scratchQuestion) await Question.deleteOne({ _id: scratchQuestion._id });
+    await Question.deleteMany({ levelKey: SCRATCH_QUESTION_LEVEL_KEY, sequence: SCRATCH_QUESTION_SEQUENCE });
+    process.env.DEV_PARTICIPANT_ID = savedDevId;
+    await Response.deleteMany({ participantId: scratchParticipant._id });
+    await Attempt.deleteMany({ participantId: scratchParticipant._id });
+    await Participant.deleteOne({ _id: scratchParticipant._id });
+  }
 };
 
 const printResultingDocuments = async () => {
@@ -242,26 +756,24 @@ const printResultingDocuments = async () => {
   const responses = await Response.find({ attemptId: { $in: createdAttemptIds } }).lean();
   console.log("\n=== Attempt documents ===");
   console.log(JSON.stringify(attempts, null, 2));
-  console.log("\n=== Response documents ===");
-  console.log(JSON.stringify(responses, null, 2));
-};
-
-const testMeRecords = async () => {
-  const { status, body } = await request("GET", "/play/me/records");
-  assert.equal(status, 200);
-  assert.ok(body.records.length >= 3, "should have prelevel, l1(failed), l1(remediation) at least");
-  assert.ok(body.records.every(r => typeof r.score === "number"));
-  log(`GET /play/me/records: ${body.records.length} record(s) OK`);
+  console.log("\n=== Response documents (count only) ===");
+  console.log(responses.length);
 };
 
 const run = async () => {
   await setup();
   try {
     await testLevelsInitialState();
-    await testPassPrelevel();
-    await testFailAndRemediateL1();
+    await testCleanFirstTryMastery();
+    await testNoMidLevelRestart();
+    await testConcurrentAttemptCreationNoDuplicateKey();
+    await testStaleAttemptCountAfterWinnerAlreadySubmitted();
+    await testFailRestartThenRemediateToMastery();
     await testIntegrityGuards();
     await testMeRecords();
+    await testAdminTrail();
+    await testEveryLevelAndQuestionType();
+    await testHotspotVideoScored();
     await printResultingDocuments();
     log("ALL CHECKS PASSED");
   } finally {

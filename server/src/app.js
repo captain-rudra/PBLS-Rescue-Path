@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import playRouter from "./routes/play/index.js";
+import adminRouter from "./routes/admin/index.js";
 import { sendError } from "./lib/httpError.js";
 
 export const createApp = () => {
@@ -9,6 +10,7 @@ export const createApp = () => {
 
   app.get("/health", (_request, response) => response.json({ ok: true }));
   app.use("/play", playRouter);
+  app.use("/admin", adminRouter);
 
   app.use((_request, response) => sendError(response, 404, "NOT_FOUND", "No such route"));
 

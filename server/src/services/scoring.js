@@ -1,8 +1,10 @@
-// Server-side game rules: scoring, star bands, pass/fail and remediation
-// routing. The client only ever submits a `given` payload — everything in
-// this file is what turns that into a score. See docs/SPEC.md section 3.7.
+// Server-side game rules: scoring, star bands, and the three-outcome
+// progression model (fail / remediate / mastered). The client only ever
+// submits a `given` payload — everything in this file is what turns that
+// into a score. See docs/SPEC.md sections 2.3, 2.7 and 3.7.
 
 import { responseDamage, vitalsFromDamage } from "../../../shared/vitals.js";
+import { ATTEMPT_OUTCOMES } from "../../../shared/constants.js";
 
 const OPTION_BASED_TYPES = new Set(["mcq", "video_mcq", "animation_mcq", "split_screen", "hotspot_video"]);
 
@@ -52,10 +54,16 @@ export const validateGiven = (question, given) => {
   }
   if (question.type === "sequence") {
     const correctOrder = question.correctOrder || [];
-    const order = given?.order;
-    if (!Array.isArray(order) || order.length !== correctOrder.length) return false;
     const correctSet = new Set(correctOrder);
-    return order.every(id => correctSet.has(id)) && new Set(order).size === order.length;
+    const isValidPermutation = arr =>
+      Array.isArray(arr) && arr.length === correctOrder.length && new Set(arr).size === arr.length && arr.every(id => correctSet.has(id));
+    // `shownOrder` is the client's seeded-shuffle arrangement at first render
+    // (SPEC 3.3) and is required, not optional metadata: without it a wrong
+    // `order` cannot later be told apart from "never rearranged the shown
+    // rows" versus "rearranged into a different wrong order" — the shuffle
+    // means that distinction isn't recoverable from `order` alone once two
+    // participants see the same item in different starting arrangements.
+    return isValidPermutation(given?.order) && isValidPermutation(given?.shownOrder);
   }
   return false;
 };
@@ -101,24 +109,60 @@ export const computeStreakBonus = orderedIsCorrect => {
 };
 
 /**
- * Star bands apply to `first`/`replay` attempts. A remediation attempt
- * always awards exactly one star on pass, per SPEC 2.7 ("Passing
- * remediation awards one star"). Any pass below the 80% band still earns
- * one star — a level cannot be passed and awarded zero stars.
+ * Star bands, applied only to the level's frozen first attempt (SPEC 2.3):
+ * mastering a level always eventually reaches 100%, so basing stars on the
+ * final attempt would make every level end at three stars and the display
+ * would carry no information. Pure function of accuracy — no pass/fail or
+ * attempt-kind special-casing.
  */
-export const computeStars = ({ accuracy, passed, kind }) => {
-  if (!passed) return 0;
-  if (kind === "remediation") return 1;
+export const computeStars = accuracy => {
   const band = STAR_BANDS.find(b => accuracy >= b.min);
-  return band ? band.stars : 1;
+  return band ? band.stars : 0;
+};
+
+/**
+ * The three submit-time outcomes (SPEC 2.3/2.7). The pass mark gates only
+ * a `kind: "first"` attempt — fail restarts the WHOLE level from question
+ * 1. Once a `kind: "remediation"` attempt has been reached, the pass mark
+ * no longer applies: a remediation round that isn't perfect produces
+ * another remediation round over whatever's still missed, never a full
+ * restart. Only 100% ends the chain, on either kind.
+ *
+ * Without this kind-awareness, remediation rounds shrink to their missed
+ * subset each time and a round below ~5 items can't land in the pass-mark
+ * band at all (no integer k satisfies 0.8n <= k < n for n < 5) — so a
+ * second remediation round would be unreachable through real play on any
+ * of this seed's levels, and a code path that can't be reached by playing
+ * is not production code.
+ */
+export const outcomeFor = (accuracy, passMark, kind) => {
+  if (accuracy === 100) return ATTEMPT_OUTCOMES.MASTERED;
+  if (kind === "remediation") return ATTEMPT_OUTCOMES.REMEDIATE;
+  if (accuracy >= passMark) return ATTEMPT_OUTCOMES.REMEDIATE;
+  return ATTEMPT_OUTCOMES.FAIL;
+};
+
+/**
+ * Which remediation round `attempt` is (1st, 2nd, ...), counting only
+ * kind: "remediation" attempts for the same level up to and including it.
+ * 0 for a non-remediation attempt. Used to auto-expand the feedback card
+ * from the third round onward (SPEC 2.6) — always recomputed from the
+ * attempts collection, never stored.
+ */
+export const remediationRoundFor = (attempt, allAttemptsForLevel) => {
+  if (attempt.kind !== "remediation") return 0;
+  return allAttemptsForLevel.filter(a => a.kind === "remediation" && a.attemptNo <= attempt.attemptNo).length;
 };
 
 /**
  * Rolls a set of counted (non-retry) responses up into the attempt-level
- * figures: score, accuracy, pass/fail, stars, vitals and derived timing.
- * `questions` must be the exact set pinned to the attempt (attempt.questionIds).
+ * figures: score, accuracy, per-attempt stars, vitals and derived timing.
+ * `questions` must be the exact set pinned to the attempt
+ * (attempt.questionIds). Does NOT compute `passed` — whether this attempt
+ * avoided a restart depends on its `kind` too (outcomeFor), not accuracy
+ * alone, so that's the caller's job once it knows the outcome.
  */
-export const aggregateAttempt = ({ level, attempt, questions, responses }) => {
+export const aggregateAttempt = ({ level, questions, responses }) => {
   const ordered = [...responses].sort((a, b) => new Date(a.answeredAt) - new Date(b.answeredAt));
   const questionById = new Map(questions.map(q => [String(q._id), q]));
 
@@ -147,33 +191,88 @@ export const aggregateAttempt = ({ level, attempt, questions, responses }) => {
   const accuracy = totalQuestions ? Math.round((correctCount / totalQuestions) * 100) : 0;
   const streakBonus = computeStreakBonus(ordered.map(r => r.isCorrect));
   const score = totalPoints + streakBonus;
-  const passed = accuracy >= level.passMark;
-  const starsAwarded = computeStars({ accuracy, passed, kind: attempt.kind });
+  const starsAwarded = computeStars(accuracy);
   const vitalsEnd = vitalsFromDamage(cumulativeDamage);
 
-  return { score, accuracy, passed, starsAwarded, vitalsEnd, activeMs, hiddenMs, streakBonus, missedQuestionIds };
+  return { score, accuracy, starsAwarded, vitalsEnd, activeMs, hiddenMs, streakBonus, missedQuestionIds };
+};
+
+/**
+ * Objective-level rollup for the result card (SPEC 2.6): "an objective is
+ * ticked only when every item mapped to it was answered correctly."
+ * `applicable: false` means no question in this attempt's pinned set
+ * carries that objective — expected for a remediation attempt, which only
+ * replays the missed subset of a level's full objective list.
+ */
+export const summarizeObjectives = ({ level, questions, responses }) => {
+  const responseByQuestionId = new Map(responses.map(r => [String(r.questionId), r]));
+  return level.objectives.map(objective => {
+    const relevant = questions.filter(q => q.objective === objective);
+    if (relevant.length === 0) return { objective, applicable: false, met: false };
+    const met = relevant.every(q => responseByQuestionId.get(String(q._id))?.isCorrect === true);
+    return { objective, applicable: true, met };
+  });
+};
+
+/**
+ * Rolls a level's full attempt history into the figures the dashboard,
+ * result card and records all need — computed fresh from the attempts
+ * collection every time, never stored (SPEC 2.3): the first attempt ever
+ * made (attemptNo 1) is frozen as the level's headline score/accuracy/
+ * stars forever, regardless of how many restarts or remediation rounds
+ * follow; mastery is the first attempt (of any kind) that reached 100%;
+ * restart and remediation counts are plain tallies of attempt `kind`.
+ */
+export const summarizeLevelAttempts = attempts => {
+  const sorted = [...attempts].sort((a, b) => a.attemptNo - b.attemptNo);
+  const firstAttempt = sorted.find(a => a.attemptNo === 1) || null;
+  const masteryAttempt = sorted.find(a => a.accuracy === 100) || null;
+  const latestAttempt = sorted.length ? sorted[sorted.length - 1] : null;
+  const restartCount = Math.max(0, sorted.filter(a => a.kind === "first").length - 1);
+  const remediationCount = sorted.filter(a => a.kind === "remediation").length;
+  const headline = firstAttempt
+    ? { attemptId: String(firstAttempt._id), score: firstAttempt.score, accuracy: firstAttempt.accuracy, starsAwarded: computeStars(firstAttempt.accuracy) }
+    : null;
+  return { firstAttempt, masteryAttempt, latestAttempt, restartCount, remediationCount, headline };
 };
 
 /**
  * Server-side level progression. `attemptsByLevelId` must contain only
  * submitted, non-practice attempts. The first level is always unlocked;
- * every later level unlocks once the previous one has a passed attempt.
+ * every later level unlocks once the previous one has been MASTERED
+ * (100%, not merely past the pass mark) — see SPEC 2.3.
+ *
+ * Five node states: `locked`, `active` (unlocked, never attempted),
+ * `complete` (mastered), `remediating` (latest attempt cleared the pass
+ * mark but isn't 100% yet — one more remediation round due) and `failed`
+ * (latest attempt was below the pass mark — the whole level restarts).
  */
 export const computeLevelProgress = (levels, attemptsByLevelId) => {
   const progress = [];
-  let previousPassed = true;
+  let previousMastered = true;
   for (const level of levels) {
     const attempts = attemptsByLevelId.get(String(level._id)) || [];
-    const passedAttempts = attempts.filter(a => a.passed);
-    const unlocked = previousPassed;
+    const summary = summarizeLevelAttempts(attempts);
+    const unlocked = previousMastered;
+
     let state;
     if (!unlocked) state = "locked";
-    else if (passedAttempts.length > 0) state = "complete";
-    else if (attempts.length > 0) state = "failed";
-    else state = "active";
-    const starsAwarded = passedAttempts.length ? Math.max(...passedAttempts.map(a => a.starsAwarded)) : 0;
-    progress.push({ level, unlocked, state, starsAwarded, attempts });
-    previousPassed = unlocked && passedAttempts.length > 0;
+    else if (summary.masteryAttempt) state = "complete";
+    else if (!summary.latestAttempt) state = "active";
+    else if (summary.latestAttempt.passed) state = "remediating";
+    else state = "failed";
+
+    progress.push({
+      level,
+      unlocked,
+      state,
+      starsAwarded: summary.headline?.starsAwarded ?? 0,
+      headline: summary.headline,
+      restartCount: summary.restartCount,
+      remediationCount: summary.remediationCount,
+      attempts
+    });
+    previousMastered = unlocked && Boolean(summary.masteryAttempt);
   }
   return progress;
 };

@@ -29,11 +29,11 @@ design makes that setting visible.
 
 | Level key | Scene | Player role | Badge | Questions |
 |---|---|---|---|---|
-| `prelevel` | The playground | Bystander | Vigilant eye | 10 |
-| `l1` | The living room | First responder | Scene secured | 10 |
-| `l2` | Poolside | CPR provider | Rhythm keeper | 17 |
-| `l3` | The football field | AED operator | Shock ready | 7 (6 are stubs) |
-| `l4` | The emergency room | Team leader | Closed loop | 5 |
+| `prelevel` | The playground | Bystander | — (none) | 10 |
+| `l1` | The living room | First responder | Scene Scout | 10 |
+| `l2` | Poolside | CPR provider | CPR Champion | 21 |
+| `l3` | The football field | AED operator | Life Saver | 21 |
+| `l4` | The emergency room | Team leader | Team Leader | 8 |
 
 The world is warm and illustrated; the HUD layered on top is clinical. That contrast is
 the visual signature. Do not make the whole interface a dark clinical monitor — the
@@ -55,7 +55,7 @@ Locked slate   #3A4A63   disabled nodes
 Display font: Fredoka. Interface and clinical text: Inter. Sentence case throughout.
 Scale — level title 22, question stem 15, option 13, feedback 12, HUD label 10.
 
-### 2.3 The vitals bar — the lives system
+### 2.3 The vitals bar and the progression mechanic
 
 Instead of hearts, the HUD carries the virtual child's oxygen saturation.
 
@@ -64,21 +64,63 @@ Instead of hearts, the HUD carries the virtual child's oxygen saturation.
 | Stable | 100% | Normal scene colour |
 | One error | 93% | Scene takes a cyanotic tint |
 | Two errors | 86% | Alarm tone loops |
-| Three errors | 79% | Deterioration screen, level restarts |
+| Three+ errors | 79% | Scene stays dimmed, alarm keeps looping |
 
-The bar never reaches zero on screen. Deterioration is signalled by the alarm and a
-dimmed scene, not a death animation. A partially correct drag costs proportionally
+The bar never reaches zero on screen. A partially correct drag costs proportionally
 (one misplaced token out of six costs 2, not the full 7). This cost model is shared
 between the live HUD and the server's stored `vitalsEnd` — one function, imported by
 both — never two implementations computing two numbers for the same reading.
 
-"Restarts" means exactly that: the in-progress attempt is abandoned (7) and a new one
-begins at question one. It is not a soft reset — the interrupted attempt remains in the
-data as its own row, `status: abandoned`.
+**The bar is live feedback only — it no longer triggers anything.** A level always
+runs to completion; there is no mid-level restart. Pass/fail is decided once, at
+submit, and **the pass mark gates only a `kind: "first"` attempt**:
 
-This mechanic is deliberate: the consequence of an error inside the game is the same
-consequence it has in the ward, which is what makes it defensible in the methodology
-chapter rather than merely decorative.
+| Attempt kind | Accuracy | Outcome |
+|---|---|---|
+| `first` | below `passMark` | **Fail.** The whole level restarts from question 1 — a fresh `kind: "first"` attempt with the full question set, not just what was missed. |
+| `first` | at or above `passMark`, below 100% | **Remediate.** A `kind: "remediation"` round over just the items missed this round. |
+| `remediation` | below 100% | **Remediate.** Another `kind: "remediation"` round over just the items missed THIS round — regardless of how low this round's own accuracy is. The pass mark does not apply once remediation has started. |
+| either | exactly 100% | **Mastered.** The next level unlocks. |
+
+Once a participant has cleared the pass mark on a `first` attempt, they are in
+remediation until they reach 100% — a remediation round that isn't perfect produces
+another remediation round over whatever's still missed, never a full restart.
+Fail-and-restart is an outcome reserved for a `first` attempt.
+
+This is deliberate, not an oversight: a remediation round's item count shrinks to its
+predecessor's miss count every round, and for `n` items there is no accuracy between
+the pass mark and 100% unless `n` is large enough (at 80%, `n` must be at least 5 — no
+integer `k` satisfies `0.8n ≤ k < n` below that). A remediation round on this
+instrument's content is very often down to a handful of items, sometimes one. Gating
+remediation rounds on the pass mark the same way a first attempt is gated would make a
+second remediation round unreachable through real play on most levels — the round
+would fail back to a full restart before it could ever produce another partial-pass
+round — and a code path that cannot be reached by playing is not production code.
+
+None of this is stored as a status on the attempt — `outcomeFor(accuracy, passMark,
+kind)` is a pure function, recomputed wherever it's needed, so it can never drift out
+of sync with the accuracy, pass mark and kind it's derived from.
+
+**Scoring is frozen to the first attempt.** The score and accuracy shown as a level's
+headline figure — on the result card, the dashboard, and in every record — are always
+`attemptNo: 1`'s, permanently, no matter how many restarts or remediation rounds follow
+to eventually reach 100%. Later attempts are still scored and stored in full (every
+response is still evidence), they just never overwrite the headline. Stars are banded
+off that same frozen accuracy (§3.7) — since every level eventually reaches 100% by
+design, banding stars off the *final* accuracy would put every level at three stars and
+the display would carry no information about how the participant actually did.
+
+Two counts travel alongside the headline, both derived from the attempts collection —
+never a stored counter that could drift out of sync with it:
+
+- **Restarts** — count of `kind: "first"` attempts for the level, minus 1 (the
+  original attempt isn't itself a restart).
+- **Remediation rounds** — count of `kind: "remediation"` attempts for the level.
+
+This mechanic is deliberate: an error inside the game still has a real, felt
+consequence (visible on the vitals bar in the moment, and on the permanent record
+after), but it no longer erases in-progress work the way a mid-level restart did — the
+consequence is legible and defensible in the methodology chapter, not merely punitive.
 
 ### 2.4 Motion vocabulary
 
@@ -87,7 +129,7 @@ chapter rather than merely decorative.
 | Correct answer | 320 ms | Ring expands from the chosen card, points fly to the HUD, ECG spikes, monitor beep |
 | Wrong answer | 420 ms | 2px shake, coral vignette, vitals drop, cyanotic tint |
 | Feedback card | 260 ms | Slides up from the bottom, overshoot easing |
-| Level complete | 4.5 s | ROSC sequence, see 2.7 |
+| Level mastered | 4.5 s | Full ROSC sequence, see 2.7 |
 | Path unlock | 900 ms | Route draws itself, lock breaks, camera pans |
 
 ### 2.5 Screen flow
@@ -95,11 +137,20 @@ chapter rather than merely decorative.
 ```
 Dashboard (rescue path)
   → Mission briefing (objectives, pass mark)
-    → Question  ⇄  Feedback card        [loop until level end]
-      → Score ≥ passMark?
-          no  → Remediation (missed items only, 1 star on pass)
-          yes → ROSC sequence → Result card → next node unlocks → Dashboard
+    → Question  ⇄  Feedback card        [loop until every question is answered]
+      → Submit — kind + accuracy against passMark (§2.3):
+          kind:first,       < passMark  → Fail: whole level restarts from question 1
+          kind:first,       ≥ passMark  → Remediate: round over just the missed items
+          kind:remediation, < 100%      → Remediate: another round, missed items only —
+                                           repeats until a round reaches 100%, whatever
+                                           THIS round's own accuracy is
+          accuracy = 100%   (either kind) → Mastered: ROSC sequence → Result card
+                                             → next node unlocks → Dashboard
 ```
+
+A level always runs to completion in one pass — the loop above never stops mid-level.
+"Restart" and "remediate" both mean returning to Mission briefing → Question, just with
+a different question set (§2.3); only reaching 100% moves on to the ROSC sequence.
 
 ### 2.6 Screens
 
@@ -107,16 +158,24 @@ Dashboard (rescue path)
 green, the rest in dead slate. Active node oversized, pulsing at 60 bpm, the only
 filled accent on screen. Locked nodes desaturated with a padlock.
 
-Node states: `locked` (slate + padlock, 50% opacity), `active` (green fill, 80px,
-pulsing ring), `complete` (green outline, tick, 1–3 gold stars), `failed` (coral
-outline, retry glyph).
+Five node states: `locked` (slate + padlock, 50% opacity), `active` (green fill, 80px,
+pulsing ring, unlocked but never attempted), `complete` (green outline, tick — mastered
+at 100%), `remediating` (gold outline, review glyph — latest attempt cleared the pass
+mark but isn't 100% yet, one more remediation round due), `failed` (coral outline,
+retry glyph — latest attempt was below the pass mark, the whole level restarts).
 
-Stars: below passMark = none and locked; 80–89% = 1; 90–96% = 2; 97%+ = 3 plus a
-bonus badge.
+Stars are banded off the level's frozen first-attempt accuracy (§2.3, §3.7), so they
+are knowable — and shown — as soon as a first attempt exists, in any of the four
+non-locked states, not only once the level is mastered: below 80% = 0; 80–89% = 1;
+90–96% = 2; 97%+ = 3 plus a bonus badge. A level can therefore show, say, one star
+while still `remediating` or `failed` — that star is permanent and will not become
+three just because the level is eventually mastered.
 
 **Mission briefing.** Shown once on entering a level. Scene name, level title, the
 scenario line, the full objectives list from the level document, mission parameters
-(question count, formats, pass mark, badge), and a Begin rescue button. Objectives
+(question count, formats, pass mark, badge), and a Begin rescue button — except when
+the level is already `complete`, which shows the frozen headline (score, accuracy,
+stars, restart and remediation counts) instead, with nothing left to begin. Objectives
 must be reopenable from the pause menu.
 
 **Question.** HUD strip on top (level and scene, question counter, vitals bar, live
@@ -128,32 +187,53 @@ to the top. Answer locks on selection — no going back.
 `feedback.text` and, if present, `feedback.videoUrl` as an optional inline player.
 On a wrong answer the chosen card turns coral and the correct card turns green
 simultaneously, both staying visible while the explanation is read. No score
-deduction and no buzzer — the cost is the vitals bar plus a guaranteed second
-encounter in the remediation round.
+deduction and no buzzer — the cost is the vitals bar plus another encounter with the
+item, in whichever round (restart or remediation) revisits it.
 
-**Result card.** Stars, four metric tiles (accuracy, time, best streak, points), the
-objectives list marked against performance, the missed items list, and two actions:
-continue, or replay for three stars. An objective is ticked only when every item
-mapped to it was answered correctly.
+The explanation is collapsed behind a "Show explanation" toggle by default — it does
+not force itself on every correct or wrong answer. From the **third remediation round
+onward** for a level, it auto-expands instead: a participant still missing items after
+two remediation rounds should not be able to skip past the teaching moment.
+
+**Result card.** Only ever reached on a mastered submit (§2.3). Stars, four metric
+tiles (first-attempt accuracy, time on this final round, best streak this round,
+first-attempt points), the objectives list and missed items marked against the
+**frozen first attempt** — not this final round, which, being mastered, is trivially
+all correct and would show nothing useful — the two derived counts (restarts,
+remediation rounds), and a single continue action. An objective is ticked only when
+every item mapped to it was answered correctly on that first attempt.
 
 **Pause menu.** Objectives, mute toggle, restart level, exit to path. No skip.
 Exiting mid-level preserves the resume point but records the attempt as incomplete.
 
 ### 2.7 The ROSC sequence
 
-Six frames, roughly 4.5 seconds, on passing a level:
+Three variants, one per submit outcome (§2.3).
+
+**Mastered (100%).** The full sequence, six frames, roughly 4.5 seconds:
 
 1. **0.0–0.9s** — Screen goes near-black, a flat coral trace crosses it, sustained alarm tone
 2. **0.9–1.8s** — The flatline converts left to right into normal sinus rhythm; alarm gives way to a steady beep at 60 bpm
 3. **1.8–2.4s** — `ROSC ACHIEVED` stamp scales in with overshoot easing, settling at a slight angle
 4. **2.4–3.2s** — Cyanotic tint lifts, warm daylight returns, the child opens their eyes (Rive)
-5. **3.2–4.0s** — Metrics tick up; stars fill one at a time with a rising chime
+5. **3.2–4.0s** — Metrics tick up; stars fill one at a time with a rising chime — the **frozen first-attempt** figures (§2.3), not this round's own (always 100%)
 6. **4.0–4.5s** — Camera pans to the path, route draws forward, padlock breaks, next scene gains colour
 
-**Below the pass mark** the sequence stops at frame 1. The banner reads
-`Patient not stabilised`, no stars are awarded, and the only route forward is a
-remediation round containing just the missed items. Passing remediation awards one
-star and unlocks the next level.
+**Fail (a `first` attempt below the pass mark).** Stops at frame 1 exactly as before.
+The banner reads `Patient not stabilised`, with a count of items missed this round, and
+the only route forward is **Restart level** — a fresh attempt over the full question
+set, not a remediation round.
+
+**Remediate (a `first` attempt at or above the pass mark short of 100%, or ANY
+`remediation` round short of 100%).** Frame 1 is replaced with a calmer beat: not the
+coral flatline and alarm (this is not a failure), but a gold, irregular-but-not-flat
+trace, no alarm tone. The banner reads `Almost stable`, with a count of items still
+needing review, and the route forward is **Continue remediation** — a round covering
+just what this attempt missed. Once in a remediation round, this variant shows
+regardless of how low that round's own accuracy was — the pass mark does not apply
+here (§2.3), so a remediation round never falls back to the fail variant. This is what
+lets it repeat multiple times in real play down to very small item counts; see §2.6 for
+the feedback-card behaviour that kicks in from the third round.
 
 ### 2.8 Sound
 
@@ -236,7 +316,29 @@ a custom drag that loses it.
 | Sequence | 15 per correctly positioned row, +40 if the whole order is right first time |
 | Streak bonus | +10 per consecutive correct, capped at +100 |
 
-All computed server-side. The client submits a choice, never a score.
+All computed server-side, per attempt. The client submits a choice, never a score.
+
+**Star bands**, applied only to the level's frozen first attempt (§2.3) — never to a
+later restart or remediation round, and never gated on pass/fail:
+
+| First-attempt accuracy | Stars |
+|---|---|
+| < 80% | 0 |
+| 80–89% | 1 |
+| 90–96% | 2 |
+| 97–100% | 3 |
+
+A level is only ever unlocked for the next one, and only ever shows `complete`, once
+some attempt (of any kind) reaches exactly 100% — but the stars shown for it stay
+whatever the first attempt's own accuracy banded to, permanently. A level entered once
+at 62%, restarted, remediated twice and finally mastered still shows 0 stars: that 62%
+is the number worth remembering for the results chapter, not the eventual 100%, which
+every mastered level has by construction.
+
+Every attempt still stores its own `score`/`accuracy`/`starsAwarded` in full — these
+per-attempt figures back the item-analysis and "attempts per level" measures (§11) —
+only the *displayed headline* (result card, dashboard, records) is pinned to
+`attemptNo: 1`.
 
 ---
 
@@ -490,7 +592,11 @@ vitalsEnd, passed, starsAwarded, status`
 scoring and submission-completeness checks are never at the mercy of the bank changing
 underneath an in-progress attempt.
 
-`kind` is `first | remediation | replay`.
+`kind` is `first | remediation`. `outcome` (`fail | remediate | mastered`) is never
+stored on the attempt — it is always `outcomeFor(accuracy, level.passMark)`, derived
+fresh wherever it's needed (§2.3), so it can't drift out of sync with the accuracy and
+pass mark it comes from.
+
 `status` is `in_progress | submitted | abandoned | kicked`.
 
 **A participant can only meaningfully have one `in_progress` attempt per level.**
@@ -502,11 +608,12 @@ on the same level — not just a client-side guard against re-firing. A unique i
 the narrow race window between the check and the insert.
 
 Nothing that starts an attempt may leave it `in_progress` with no way to reach a
-terminal status. The vitals-restart mechanic (2.3) is the one case in this build that
-interrupts an attempt outright: hitting the third error band abandons the current
-attempt (`status: abandoned`) and starts a fresh one. An `in_progress` document with no
-route to `submitted`, `abandoned` or `kicked` is a bug — `attempts per level` is a
-reported measure (11), and an orphaned row corrupts it.
+terminal status. A level now always runs to completion (§2.3 — there is no mid-level
+restart), so in this build every `in_progress` attempt reaches `submitted` by normal
+play; `abandoned` remains available for a facilitator-side exit (kick, Phase 2) rather
+than anything the vitals bar triggers. An `in_progress` document with no route to
+`submitted`, `abandoned` or `kicked` is a bug — `attempts per level` is a reported
+measure (11), and an orphaned row corrupts it.
 
 **`responses`** — append only — `attemptId, participantId, sessionId, questionId,
 questionVersion, levelId, given, isCorrect, partialScore, shownAt, firstInteractionAt,
@@ -596,8 +703,19 @@ GET  /admin/sessions/:id/snapshot       CSV, changes nothing
 GET /admin/records/participants
 GET /admin/records/items                difficulty and discrimination
 GET /admin/records/export               the four CSVs
+GET /admin/records/trail                one participant, one level: every attempt in
+                                         order (kind, outcome, remediation round) and
+                                         every response within it in the order it was
+                                         answered, with all four §8 timestamps — "see
+                                         exactly where a participant struggled"
 GET /admin/audit
 ```
+
+`GET /admin/records/trail` is real today, ahead of the rest of this section — real
+admin auth (sign-in, roles) is a later build phase and doesn't exist yet, so this one
+route is gated by a temporary dev stand-in (`DEV_ADMIN_ID`), the same pattern already
+used for participant auth. It exists so the underlying data is actually reachable
+before the admin console itself is built, not as a substitute for it.
 
 ### Gameplay — participant
 ```
@@ -607,9 +725,10 @@ POST /play/attempts                 idempotent — returns the existing in_progr
                                      for this level if one exists, otherwise starts a new
                                      one and returns questions at pinned versions
 POST /play/responses                one answer, written immediately, never batched
-POST /play/attempts/:id/submit      scores, awards stars, unlocks or routes to remediation
-POST /play/attempts/:id/abandon     closes an in_progress attempt as abandoned; required
-                                     before starting a new one over it (see 7)
+POST /play/attempts/:id/submit      scores, derives the outcome (fail / remediate /
+                                     mastered — see 2.3), unlocks the next level on
+                                     mastery, freezes the headline if this was attemptNo 1
+POST /play/attempts/:id/abandon     closes an in_progress attempt as abandoned
 GET  /play/me/records               this participant's own rows only
 ```
 
@@ -720,21 +839,35 @@ Do not start Phase 2 until Phase 1 exports have been verified by hand.
 ## 13. Content still to be written
 
 Not a build problem, but it blocks a real session. Schedule alongside step 2, not
-step 5. All are seeded as `status: "draft"` with a `authoringNote` explaining why.
+step 5. All are seeded as `status: "draft"` with an `authoringNote` explaining why.
+
+Exactly three items remain, all in the first two levels:
 
 | Item | Needed |
 |---|---|
-| `l1` Q9 | Source lists only four correct findings and no distractors, so every token belongs in the same bucket and the item cannot discriminate. Add 3–4 findings that do **not** indicate arrest |
-| `l2` Q17 | Hotspot coordinates cannot be authored until the clip exists |
-| `l3` Q2–Q6 | Five stubs, one per uncovered objective — no content in the source |
-| `l3` Q7 | Choking management appears in the level title but has no objective and no items. Add the objective to the level first |
+| `l1:9` (drag_drop) | The source lists only correct arrest findings and no distractors, so every token belongs in the same bucket and the item cannot discriminate. Add three or four findings that do **not** indicate arrest — a strong palpable pulse, normal chest rise, crying — before publishing. |
+| `l2:3` (sequence) | The corrected document lists the in-hospital Chain of Survival under the same question number as the out-of-hospital chain (`l2:2`). Decide with the supervisor whether this is one question or two: publish it as its own item, or merge both chains into `l2:2` and drop this. Seeding it separately has already shifted every later `l2` sequence number by one relative to the source document. |
+| `l2:18` (hotspot_video) | Hotspot coordinates cannot be authored until the clip is filmed. Publish only once the video exists and the hotspot window and `correct` option key are set in the builder. The four options are the fallback route and are already written. |
+
+`l3` is now fully authored: the five former stubs (`l3:2`–`l3:6`, one per AED
+objective) and the foreign-body-airway-obstruction items all carry real content and are
+published.
 
 Several published items carry feedback text **written for the build rather than taken
-from the source document**; each is marked with an `authoringNote`. These are clinical
-statements and need review by the supervising faculty before the study runs.
+from the source document**, each flagged with an `authoringNote`. They are clinical
+statements and need review by the supervising faculty before the study runs. Other
+`authoringNote`s record where the corrected document changed an answer, a parameter
+list or a step count from the original — those are informational, not gaps.
 
 Two source items labelled *Drag & Drop* are ordering tasks and are seeded as
-`type: "sequence"` (`l2` Q2 and Q12).
+`type: "sequence"` (`l2:2` and `l2:13`).
+
+**The progression mechanic (§2.3) is pending supervisor approval.** Two specific
+numbers are design decisions, not yet signed off by the supervising faculty: the 80%
+`passMark` that separates a full restart from a remediation round, and the requirement
+that a level must reach exactly 100% accuracy (on some attempt) before the next level
+unlocks. Both are load-bearing for the results chapter's methodology section and must
+be confirmed — or revised — before the instrument is locked for a real session.
 
 ---
 

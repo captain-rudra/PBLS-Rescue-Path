@@ -11,7 +11,7 @@ import { QUESTION_COMPONENTS } from "./questions/index.js";
 // timestamps, the hidden-tab tracker, and the immediate POST /play/responses
 // call. The parent keys this component by questionId so a fresh instance
 // (and fresh timestamps) is created for every question.
-export const QuestionRunner = ({ attemptId, question, onAnswered, onContinue, isLast }) => {
+export const QuestionRunner = ({ attemptId, question, onAnswered, onContinue, isLast, autoExpandFeedback }) => {
   const shownAtRef = useRef(Date.now());
   const firstInteractionAtRef = useRef(null);
   const getHiddenMs = useHiddenTracker();
@@ -75,7 +75,14 @@ export const QuestionRunner = ({ attemptId, question, onAnswered, onContinue, is
 
       <AnimatePresence>
         {result && (
-          <FeedbackCard isCorrect={result.isCorrect} text={result.text} videoUrl={result.videoUrl} isLast={isLast} onContinue={onContinue} />
+          <FeedbackCard
+            isCorrect={result.isCorrect}
+            text={result.text}
+            videoUrl={result.videoUrl}
+            isLast={isLast}
+            onContinue={onContinue}
+            autoExpand={autoExpandFeedback}
+          />
         )}
       </AnimatePresence>
     </motion.div>

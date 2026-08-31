@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, sortableKeyboardCoordinates, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -33,7 +33,18 @@ export const Sequence = ({ question, attemptId, onFirstInteraction, onCommit, re
   // no rearrangement needed). Seeded by (attemptId, questionId), not
   // Math.random(), so a mid-question refresh reproduces this same
   // arrangement instead of reshuffling it.
-  const [order, setOrder] = useState(() => seededShuffle(question.items, `${attemptId}:${question.questionId}`).map(item => item.id));
+  // Captured once, separately from `order` below: two participants can see
+  // the same sequence item pre-shuffled into different starting
+  // arrangements, so the response record must carry what THIS participant
+  // was shown, not just what they finally submitted — otherwise a wrong
+  // answer can't later be told apart from "never touched it" versus
+  // "rearranged into a different wrong order" (SPEC 3.3).
+  const shownOrderRef = useRef(null);
+  const [order, setOrder] = useState(() => {
+    const shuffled = seededShuffle(question.items, `${attemptId}:${question.questionId}`).map(item => item.id);
+    shownOrderRef.current = shuffled;
+    return shuffled;
+  });
   const locked = Boolean(result);
   const textById = useMemo(() => Object.fromEntries(question.items.map(item => [item.id, item.text])), [question.items]);
   const correctOrder = result?.correctOrder;
@@ -73,7 +84,7 @@ export const Sequence = ({ question, attemptId, onFirstInteraction, onCommit, re
         <button
           type="button"
           data-testid="confirm-sequence"
-          onClick={() => onCommit({ order }).catch(() => {})}
+          onClick={() => onCommit({ order, shownOrder: shownOrderRef.current }).catch(() => {})}
           className="mt-3 rounded-md bg-[#34D399] px-4 py-2 text-sm font-semibold text-[#16243D]"
         >
           Confirm order

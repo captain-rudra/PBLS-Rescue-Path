@@ -32,4 +32,15 @@ export const KICK_REASONS = Object.freeze([
 ]);
 
 export const SESSION_MODES = Object.freeze(["controlled", "open"]);
-export const ATTEMPT_KINDS = Object.freeze(["first", "remediation", "replay"]);
+
+// "replay" was removed: stars are now frozen to the first attempt (see
+// scoring.js), so replaying a mastered level can no longer change them and
+// there is nothing left for a third kind to mean.
+export const ATTEMPT_KINDS = Object.freeze(["first", "remediation"]);
+
+// The three submit-time outcomes (docs/SPEC.md 2.3/2.7): below the pass
+// mark restarts the whole level from question 1, at-or-above it but short
+// of 100% opens a remediation round over just what was missed, and exactly
+// 100% unlocks the next level. Never stored — always derived from
+// (accuracy, level.passMark) so it can't drift out of sync with them.
+export const ATTEMPT_OUTCOMES = Object.freeze({ FAIL: "fail", REMEDIATE: "remediate", MASTERED: "mastered" });

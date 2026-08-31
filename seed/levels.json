@@ -5,20 +5,22 @@
     "title": "Foundations of PBLS",
     "scene": "The playground",
     "role": "Bystander",
-    "badge": "Vigilant eye",
+    "badge": null,
     "passMark": 80,
     "status": "published",
     "objectives": [
-      "Define the pediatric basic life support",
-      "Enlist the conditions which require pediatric basic life support",
-      "Identify the age group that comes under PBLS",
-      "Enumerate the causative factors that lead to pediatric cardiac arrest",
-      "Explain pediatric cardiac arrest",
-      "Determine the physiology behind pediatric cardiac arrest",
-      "Differentiate between child and adult life support",
-      "Differentiate between child and infant life support",
-      "Determine the difference between NRP and PBLS"
-    ]
+      "Recognize situations requiring Pediatric Basic Life Support",
+      "Classify children into the appropriate PBLS age groups",
+      "Identify children at risk of pediatric cardiac arrest",
+      "Interpret the physiological changes leading to pediatric cardiac arrest",
+      "Differentiate pediatric cardiac arrest from adult cardiac arrest",
+      "Distinguish between infant and child PBLS algorithms",
+      "Differentiate the indications of NRP and PBLS",
+      "Select the appropriate PBLS approach based on age and clinical condition",
+      "Apply PBLS concepts in game-based clinical scenarios",
+      "Analyse case-based situations to determine when PBLS should be initiated"
+    ],
+    "authoringNote": "No badge for the prelevel, per the corrected document. Two objectives are currently unused by any seeded item: 'Distinguish between infant and child PBLS algorithms' and 'Apply PBLS concepts in game-based clinical scenarios'."
   },
   {
     "key": "l1",
@@ -26,19 +28,17 @@
     "title": "Recognition of pediatric cardiac arrest",
     "scene": "The living room",
     "role": "First responder",
-    "badge": "Scene secured",
+    "badge": "Scene Scout",
     "passMark": 80,
     "status": "published",
     "objectives": [
       "Ensure scene safety",
       "Assess responsiveness",
       "Activate emergency response",
-      "Assess breathing",
-      "Check pulse correctly",
-      "Recognize respiratory arrest",
-      "Recognize cardiac arrest",
+      "Assess breathing and pulse simultaneously within 10 seconds",
+      "Recognize respiratory and cardiac arrest",
       "Decide when to start CPR",
-      "Differentiate respiratory distress, respiratory failure, shock and cardiac arrest"
+      "Differentiate respiratory distress, failure, shock and cardiac arrest"
     ]
   },
   {
@@ -47,36 +47,39 @@
     "title": "High quality CPR",
     "scene": "Poolside",
     "role": "CPR provider",
-    "badge": "Rhythm keeper",
+    "badge": "CPR Champion",
     "passMark": 80,
     "status": "published",
     "objectives": [
-      "Describe the Pediatric Chain of Survival",
-      "Recognize when CPR is needed",
+      "Describe the Paediatric Chain of Survival, including the separate out-of-hospital and in-hospital chains",
+      "Recognise when CPR is needed",
       "Initiate high-quality CPR",
       "Differentiate infant and child CPR techniques",
-      "Perform single-rescuer and two-rescuer CPR",
+      "Perform single-rescuer 30:2 and two-rescuer 15:2 CPR",
       "Follow the PBLS algorithm correctly"
     ]
   },
   {
     "key": "l3",
     "order": 3,
-    "title": "Use of AED and choking management",
+    "title": "AED use and airway obstruction management",
     "scene": "The football field",
     "role": "AED operator",
-    "badge": "Shock ready",
+    "badge": "Life Saver",
     "passMark": 80,
-    "status": "draft",
-    "authoringNote": "Only one question exists in the source document. Five placeholder stubs are seeded as drafts, one per uncovered objective. Choking management is named in the level title but has no objectives or items in the source and needs both.",
+    "status": "published",
     "objectives": [
       "Identify when an AED should be used",
-      "Select appropriate pediatric pads",
+      "Select appropriate paediatric pads and use anterior-posterior placement for infants",
       "Correctly place AED pads",
-      "Follow AED prompts safely",
-      "Resume CPR immediately after shock",
-      "Differentiate AED use in infants and children"
-    ]
+      "Follow AED prompts safely and resume CPR immediately after shock",
+      "Differentiate AED use in infants and children",
+      "Distinguish mild from severe foreign body airway obstruction",
+      "Apply the back-blows-first approach for conscious children aged 1 year and above",
+      "Apply back blows and chest thrusts for conscious infants under 1 year",
+      "Manage foreign body airway obstruction when the victim becomes unconscious by beginning CPR"
+    ],
+    "authoringNote": "Level is now fully authored, 21 questions. Status moved from draft to published."
   },
   {
     "key": "l4",
@@ -84,14 +87,16 @@
     "title": "Team dynamics",
     "scene": "The emergency room",
     "role": "Team leader",
-    "badge": "Closed loop",
+    "badge": "Team Leader",
     "passMark": 80,
     "status": "published",
     "objectives": [
-      "Identify the principles of effective team dynamics during pediatric resuscitation",
-      "Demonstrate appropriate leadership behaviors during a pediatric cardiac arrest",
-      "Assign roles and responsibilities effectively within the resuscitation team",
-      "Apply closed-loop communication during pediatric CPR"
+      "Identify the principles of effective team dynamics during paediatric resuscitation",
+      "Demonstrate appropriate leadership behaviours",
+      "Assign roles and responsibilities effectively",
+      "Apply closed-loop communication during CPR",
+      "Demonstrate situational awareness during resuscitation",
+      "Apply assertive communication when a concern is identified"
     ]
   }
 ]
