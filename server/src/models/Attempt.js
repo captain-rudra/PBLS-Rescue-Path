@@ -14,6 +14,11 @@ const attemptSchema = new mongoose.Schema({
   activeMs: { type: Number, default: null, min: 0 },
   hiddenMs: { type: Number, default: 0, min: 0 },
   pausedMs: { type: Number, default: 0, min: 0 },
+  // Time the participant spent on the read-only level review screen
+  // (SPEC 2.6). Accumulated across visits, client-reported and
+  // server-clamped. Deliberately NOT part of the timing model (SPEC 8) —
+  // it never enters time-on-task, level time or total time.
+  reviewMs: { type: Number, default: 0, min: 0 },
   score: { type: Number, default: 0, min: 0 },
   accuracy: { type: Number, default: null, min: 0, max: 100 },
   vitalsEnd: { type: Number, default: 100, min: 0, max: 100 },

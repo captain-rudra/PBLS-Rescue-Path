@@ -754,6 +754,78 @@ const testBlsExpertMeasuresFirstAttemptOnly = async () => {
   }
 };
 
+// Read-only level review (SPEC 2.6/2.7): every question from a submitted
+// attempt, in clinical order, with stem + given + correct + feedback.
+// Viewing it must write nothing and re-score nothing; time on it lands on
+// attempt.reviewMs and NEVER on time-on-task; an in_progress attempt
+// cannot be reviewed (no mid-level answer peeking).
+const testLevelReview = async () => {
+  const scratchParticipant = await Participant.create({ code: `E2E-REVIEW-${Date.now()}`, arm: "E", sessionId: session._id });
+  const savedDevId = process.env.DEV_PARTICIPANT_ID;
+  process.env.DEV_PARTICIPANT_ID = String(scratchParticipant._id);
+  try {
+    const created = await request("POST", "/play/attempts", { levelKey: "prelevel", kind: "first" });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const { attempt, questions } = created.body;
+    await answerQuestions(attempt.attemptId, questions, questions.length - 2); // last two deliberately wrong
+    const submit = await request("POST", `/play/attempts/${attempt.attemptId}/submit`);
+    assert.equal(submit.status, 200, JSON.stringify(submit.body));
+    assert.equal(submit.body.attempt.accuracy, 80);
+    assert.equal(submit.body.outcome, "remediate");
+
+    const before = await Attempt.findById(attempt.attemptId);
+    const responsesBefore = await Response.countDocuments({ attemptId: attempt.attemptId });
+    assert.equal(before.reviewMs, 0, "reviewMs starts at 0");
+
+    const review = await request("GET", `/play/attempts/${attempt.attemptId}/review`);
+    assert.equal(review.status, 200, JSON.stringify(review.body));
+    assert.equal(review.body.items.length, 10, "review covers every question in the attempt");
+    assert.deepEqual(review.body.items.map(i => i.sequence), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "review items stay in clinical order");
+    for (const item of review.body.items) {
+      assert.ok(item.prompt?.length > 0, "every review item carries the stem");
+      assert.ok(item.feedbackText?.length > 0, "every review item carries the feedback text");
+      assert.ok(item.given !== undefined && item.correct !== undefined, "every review item carries given and correct");
+    }
+    const missed = review.body.items.filter(i => i.isCorrect === false);
+    const right = review.body.items.filter(i => i.isCorrect === true);
+    assert.equal(missed.length, 2, "the two deliberately-wrong answers show as missed");
+    assert.equal(right.length, 8);
+    for (const item of missed) assert.notEqual(item.given.selected, item.correct.correct, "a missed item's given answer differs from the correct answer");
+    for (const item of right) assert.equal(item.given.selected, item.correct.correct, "a correct item's given answer matches the correct answer");
+
+    // Viewing the review writes nothing and re-scores nothing.
+    const afterReview = await Attempt.findById(attempt.attemptId);
+    assert.equal(await Response.countDocuments({ attemptId: attempt.attemptId }), responsesBefore, "GET /review writes no responses");
+    assert.equal(afterReview.score, before.score, "GET /review does not re-score");
+    assert.equal(afterReview.accuracy, before.accuracy);
+    assert.equal(afterReview.status, before.status);
+
+    // review-time accumulates onto reviewMs only, never onto time-on-task.
+    assert.equal((await request("POST", `/play/attempts/${attempt.attemptId}/review-time`, { ms: 4200 })).body.attempt.reviewMs, 4200);
+    assert.equal((await request("POST", `/play/attempts/${attempt.attemptId}/review-time`, { ms: 800 })).body.attempt.reviewMs, 5000, "review-time accumulates across visits");
+    const afterReviewTime = await Attempt.findById(attempt.attemptId);
+    assert.equal(afterReviewTime.reviewMs, 5000);
+    assert.equal(afterReviewTime.activeMs, before.activeMs, "reviewMs must not touch activeMs (time-on-task)");
+    assert.equal(afterReviewTime.hiddenMs, before.hiddenMs, "reviewMs must not touch hiddenMs");
+    assert.equal(afterReviewTime.score, before.score);
+    assert.equal(await Response.countDocuments({ attemptId: attempt.attemptId }), responsesBefore, "review-time writes no responses");
+    assert.equal((await request("POST", `/play/attempts/${attempt.attemptId}/review-time`, { ms: -5 })).status, 400, "negative review time is rejected");
+
+    // An in_progress attempt cannot be reviewed — no mid-level answer peeking.
+    const remediation = await request("POST", "/play/attempts", { levelKey: "prelevel", kind: "remediation" });
+    assert.equal(remediation.status, 201, JSON.stringify(remediation.body));
+    const liveReview = await request("GET", `/play/attempts/${remediation.body.attempt.attemptId}/review`);
+    assert.equal(liveReview.status, 409, "an in_progress attempt must not be reviewable");
+
+    log("level review OK: full attempt in order, read-only (no writes, no re-score), reviewMs isolated from time-on-task, in_progress refused");
+  } finally {
+    process.env.DEV_PARTICIPANT_ID = savedDevId;
+    await Response.deleteMany({ participantId: scratchParticipant._id });
+    await Attempt.deleteMany({ participantId: scratchParticipant._id });
+    await Participant.deleteOne({ _id: scratchParticipant._id });
+  }
+};
+
 // The seventh type. The seed's only hotspot_video (l2:18) is a draft stub
 // (SPEC 13: hotspot coordinates can't be authored until the clip exists),
 // so it is never served through normal play — and a test must never touch
@@ -856,6 +928,7 @@ const run = async () => {
     await testAdminTrail();
     await testEveryLevelAndQuestionType();
     await testBlsExpertMeasuresFirstAttemptOnly();
+    await testLevelReview();
     await testHotspotVideoScored();
     await printResultingDocuments();
     log("ALL CHECKS PASSED");

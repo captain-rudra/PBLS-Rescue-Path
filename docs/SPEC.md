@@ -221,6 +221,22 @@ submit also newly unlocked a global achievement (§7 — in this build only BLS 
 and only ever on the fifth level's first attempt), that badge is revealed just below
 it. The reveal collapses to the final state under `prefers-reduced-motion`.
 
+**Level review.** Reached from the result card ("Review answers"), read-only. Every
+question from the attempt the result card is reporting — the **frozen first attempt**
+(§2.3), the one whose figures the card shows and the one where a given answer can
+differ from the correct one — laid out **in its seeded clinical order**, one after
+another: the stem, the participant's answer, the correct answer, a correct/missed
+marker, and the `feedback.text`. Nothing here is editable, nothing is re-scored, and
+opening it writes no `responses` row. It is not a way to navigate a level: the
+question engine still shows one question at a time, in sequence, with the answer
+locked on selection — reordering or revisiting mid-level would give a question several
+`shownAt` stamps and make time-per-question meaningless, and the item order carries a
+deliberate clinical progression. "Done" returns to the dashboard.
+
+Time spent on this screen is reported to the server and accumulated on the attempt as
+`reviewMs`, kept entirely separate from the timing model (§8) — it never enters
+time-on-task, level time or total time.
+
 **Pause menu.** Objectives, mute toggle, restart level, exit to path. No skip.
 Exiting mid-level preserves the resume point but records the attempt as incomplete.
 
@@ -252,6 +268,12 @@ regardless of how low that round's own accuracy was — the pass mark does not a
 here (§2.3), so a remediation round never falls back to the fail variant. This is what
 lets it repeat multiple times in real play down to very small item counts; see §2.6 for
 the feedback-card behaviour that kicks in from the third round.
+
+**After the result card.** The mastered variant ends on the result card. From there
+**Continue** returns to the dashboard (playing the path-unlock animation if a level was
+just unlocked), and **Review answers** opens the read-only level review (§2.6) over the
+frozen first attempt; "Done" on the review lands on the same dashboard. The review is
+the only screen reachable from the result card — there is no path back into the level.
 
 ### 2.8 Sound
 
@@ -604,8 +626,13 @@ failedPinCount, lockedUntil, excluded, excludeReason, adminNote`
 roster[], blocklist[], instrumentVersion`
 
 **`attempts`** — `participantId, sessionId, levelId, attemptNo, kind, isPractice,
-questionIds[], startedAt, submittedAt, activeMs, hiddenMs, pausedMs, score, accuracy,
-vitalsEnd, passed, starsAwarded, status`
+questionIds[], startedAt, submittedAt, activeMs, hiddenMs, pausedMs, reviewMs, score,
+accuracy, vitalsEnd, passed, starsAwarded, status`
+
+`reviewMs` accumulates time the participant spent on the read-only level review screen
+(§2.6). It is client-reported, server-clamped, and deliberately **outside the timing
+model (§8)** — it is never part of time-on-task, level time or total time. Nothing on
+the review screen writes a `responses` row or changes a score.
 
 `questionIds` pins the exact question set served for this attempt at creation time, so
 scoring and submission-completeness checks are never at the mercy of the bank changing
@@ -703,6 +730,10 @@ not read the same as six minutes of work.
 **Derived, never stored twice:** time per level, total time, wrong attempts, retries,
 first-attempt accuracy, attempts per level. A stored summary drifts out of step with
 its source.
+
+`attempts.reviewMs` (§2.6) is the one duration stored directly rather than derived. It
+sits outside this model on purpose: reviewing answers after a level is finished is not
+time on task, so it must never be added into any figure above.
 
 **Clock authority.** On joining, the browser performs an offset handshake against the
 server clock and applies that offset for display only. Every stored timestamp is

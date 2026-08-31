@@ -67,7 +67,7 @@ const BadgeReveal = ({ levelKey, levelBadge, newAchievements = [] }) => {
   );
 };
 
-export const ResultCard = ({ result, levelTitle, levelKey, levelBadge, bestStreak, onContinue }) => {
+export const ResultCard = ({ result, levelTitle, levelKey, levelBadge, bestStreak, onContinue, onReview }) => {
   const { attempt, headline, restartCount, remediationCount, unlockedNextLevelKey, newAchievements } = result;
 
   return (
@@ -131,7 +131,7 @@ export const ResultCard = ({ result, levelTitle, levelKey, levelBadge, bestStrea
           <p className="mt-6 text-center text-[12px] text-[#34D399]">Next level unlocked.</p>
         )}
 
-        <div className="mt-8">
+        <div className="mt-8 flex flex-col gap-2">
           <button
             type="button"
             data-testid="result-continue"
@@ -140,6 +140,16 @@ export const ResultCard = ({ result, levelTitle, levelKey, levelBadge, bestStrea
           >
             Continue
           </button>
+          {onReview && headline.attemptId && (
+            <button
+              type="button"
+              data-testid="result-review"
+              onClick={onReview}
+              className="w-full rounded-md border border-[#3A4A63]/40 bg-white/60 px-4 py-2.5 text-[13px] font-semibold text-[#16243D] transition hover:bg-white"
+            >
+              Review answers
+            </button>
+          )}
         </div>
       </div>
     </motion.div>

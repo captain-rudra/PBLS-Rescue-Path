@@ -306,4 +306,84 @@ router.post("/:id/submit", async (request, response) => {
   });
 });
 
+const correctAnswerFor = question => {
+  if (question.type === "drag_drop") return { correctPlacements: Object.fromEntries((question.items || []).map(item => [item.id, item.bucket])) };
+  if (question.type === "sequence") return { correctOrder: question.correctOrder || [] };
+  return { correct: question.correct ?? null };
+};
+
+// Read-only walk back through a submitted attempt (SPEC 2.6): every
+// question in its clinical order with the stem, the answer the
+// participant gave, the correct answer, and the feedback text. Writes
+// nothing and re-scores nothing. The result card links here with the
+// FROZEN first attempt's id (headline.attemptId) — the attempt whose
+// figures the card shows (SPEC 2.3), and the one where the given and
+// correct answers can genuinely differ.
+router.get("/:id/review", async (request, response) => {
+  const { id } = request.params;
+  if (!mongoose.isValidObjectId(id)) return sendError(response, 400, "INVALID_ATTEMPT_ID", "Not a valid attempt id");
+
+  const attempt = await Attempt.findOne({ _id: id, participantId: request.participant._id });
+  if (!attempt) return sendError(response, 404, "ATTEMPT_NOT_FOUND", "No such attempt for this participant");
+  if (attempt.status !== STATUS.SUBMITTED) return sendError(response, 409, "REVIEW_NOT_AVAILABLE", "Only a submitted attempt can be reviewed");
+
+  const [level, questions, responses] = await Promise.all([
+    Level.findById(attempt.levelId),
+    loadPinnedQuestions(attempt.questionIds),
+    Response.find({ attemptId: attempt._id, isRetry: false })
+  ]);
+  const responseByQuestionId = new Map(responses.map(response_ => [String(response_.questionId), response_]));
+
+  const items = questions.map(question => {
+    const answered = responseByQuestionId.get(String(question._id)) || null;
+    return {
+      questionId: String(question._id),
+      sequence: question.sequence,
+      type: question.type,
+      title: question.title,
+      scenario: question.scenario ?? null,
+      prompt: question.prompt,
+      options: (question.options || []).map(({ key, text }) => ({ key, text })),
+      buckets: (question.buckets || []).map(({ key, label }) => ({ key, label })),
+      tokens: (question.items || []).map(({ id: tokenId, text }) => ({ id: tokenId, text })),
+      given: answered ? answered.given : null,
+      isCorrect: answered ? answered.isCorrect : null,
+      correct: correctAnswerFor(question),
+      feedbackText: question.feedback.text
+    };
+  });
+
+  response.json({
+    attempt: { attemptId: String(attempt._id), levelKey: level?.key ?? null, attemptNo: attempt.attemptNo, kind: attempt.kind, reviewMs: attempt.reviewMs },
+    level: { key: level?.key ?? null, title: level?.title ?? null },
+    items
+  });
+});
+
+// One lingering session is capped so a stuck or hostile client value
+// can't pollute the field.
+const MAX_REVIEW_MS_PER_CALL = 6 * 60 * 60 * 1000;
+
+// Accumulate time spent on the review screen onto the attempt and do
+// nothing else — no response is written, no figure recomputed. reviewMs
+// is deliberately outside the timing model (SPEC 8): it never enters
+// time-on-task, level time or total time.
+router.post("/:id/review-time", async (request, response) => {
+  const { id } = request.params;
+  if (!mongoose.isValidObjectId(id)) return sendError(response, 400, "INVALID_ATTEMPT_ID", "Not a valid attempt id");
+
+  const { ms } = request.body || {};
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return sendError(response, 400, "INVALID_REVIEW_MS", "ms must be a non-negative number");
+  const clamped = Math.min(Math.round(ms), MAX_REVIEW_MS_PER_CALL);
+
+  const attempt = await Attempt.findOneAndUpdate(
+    { _id: id, participantId: request.participant._id, status: STATUS.SUBMITTED },
+    { $inc: { reviewMs: clamped } },
+    { new: true }
+  );
+  if (!attempt) return sendError(response, 404, "ATTEMPT_NOT_FOUND", "No such submitted attempt for this participant");
+
+  response.json({ attempt: { attemptId: String(attempt._id), reviewMs: attempt.reviewMs } });
+});
+
 export default router;

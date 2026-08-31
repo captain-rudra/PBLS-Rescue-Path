@@ -137,6 +137,14 @@ export const QuestionEnginePage = () => {
     () => navigate("/", { state: { justUnlockedLevelKey: state.completion?.unlockedNextLevelKey ?? null } }),
     [navigate, state.completion]
   );
+  // Read-only review of the FROZEN first attempt (headline.attemptId) —
+  // the attempt whose figures the result card shows. Carries the unlock
+  // key through so "Done" on the review still plays the path animation.
+  const handleResultReview = useCallback(() => {
+    const attemptId = state.completion?.headline?.attemptId;
+    if (!attemptId) return;
+    navigate(`/review/${attemptId}`, { state: { justUnlockedLevelKey: state.completion?.unlockedNextLevelKey ?? null } });
+  }, [navigate, state.completion]);
 
   if (state.phase === "loading") return <CenteredMessage>Loading attempt…</CenteredMessage>;
   if (state.phase === "error") return <CenteredMessage>Something went wrong: {state.error}</CenteredMessage>;
@@ -162,6 +170,7 @@ export const QuestionEnginePage = () => {
         levelBadge={state.level.badge}
         bestStreak={state.bestStreak}
         onContinue={handleResultContinue}
+        onReview={handleResultReview}
       />
     );
   }

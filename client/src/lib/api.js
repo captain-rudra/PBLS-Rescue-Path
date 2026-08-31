@@ -29,3 +29,16 @@ export const postResponse = payload => request("POST", "/responses", payload);
 export const submitAttempt = attemptId => request("POST", `/attempts/${attemptId}/submit`);
 
 export const abandonAttempt = attemptId => request("POST", `/attempts/${attemptId}/abandon`);
+
+export const getAttemptReview = attemptId => request("GET", `/attempts/${attemptId}/review`);
+
+// Fire-and-forget: reports time lingered on the read-only review screen so
+// it lands on the attempt separate from time-on-task. `keepalive` lets it
+// still send while the page is being navigated away from.
+export const reportReviewTime = (attemptId, ms) =>
+  fetch(`/play/attempts/${attemptId}/review-time`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ms }),
+    keepalive: true
+  }).catch(() => {});
