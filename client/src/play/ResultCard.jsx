@@ -1,4 +1,6 @@
 import { motion } from "framer-motion";
+import { Badge } from "../components/Badge.jsx";
+import { LEVEL_BADGE_META, ACHIEVEMENT_BADGE_META } from "./badges.jsx";
 
 const formatDuration = ms => {
   const totalSeconds = Math.round((ms ?? 0) / 1000);
@@ -34,8 +36,39 @@ const ObjectiveRow = ({ objective, applicable, met }) => {
 // nothing useful). `activeMs`/`bestStreak` are the only exceptions: those
 // describe this specific round, since "time on this playthrough" and
 // "best streak reached" are about what just happened, not the record.
-export const ResultCard = ({ result, levelTitle, bestStreak, onContinue }) => {
-  const { attempt, headline, restartCount, remediationCount, unlockedNextLevelKey } = result;
+// SPEC 2.6: the badge is revealed on the result card at the moment it is
+// earned. The level badge lands on every mastered submit that has one —
+// the prelevel has no badge (null), so `levelBadgeMeta` is undefined there
+// and the block simply doesn't render, leaving no empty slot. A newly
+// earned global achievement (BLS Expert) reveals just below it.
+const BadgeReveal = ({ levelKey, levelBadge, newAchievements = [] }) => {
+  const levelBadgeMeta = levelBadge ? LEVEL_BADGE_META[levelKey] : null;
+  const achievements = newAchievements.filter(a => ACHIEVEMENT_BADGE_META[a.key]);
+  if (!levelBadgeMeta && achievements.length === 0) return null;
+
+  return (
+    <section className="mt-6 flex flex-col items-center gap-4" data-testid="result-badges">
+      {levelBadgeMeta && (
+        <div className="flex flex-col items-center gap-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-[#FFC94A]">Badge earned</p>
+          <Badge badgeKey={levelBadgeMeta.key} name={levelBadge} accent={levelBadgeMeta.accent} Icon={levelBadgeMeta.Icon} earned reveal size={116} />
+        </div>
+      )}
+      {achievements.map(achievement => {
+        const meta = ACHIEVEMENT_BADGE_META[achievement.key];
+        return (
+          <div key={achievement.key} className="flex flex-col items-center gap-1">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[#FFC94A]">Achievement unlocked</p>
+            <Badge badgeKey={meta.key} name={achievement.name} accent={meta.accent} Icon={meta.Icon} earned reveal size={116} subtitle={achievement.description} />
+          </div>
+        );
+      })}
+    </section>
+  );
+};
+
+export const ResultCard = ({ result, levelTitle, levelKey, levelBadge, bestStreak, onContinue }) => {
+  const { attempt, headline, restartCount, remediationCount, unlockedNextLevelKey, newAchievements } = result;
 
   return (
     <motion.div
@@ -56,6 +89,8 @@ export const ResultCard = ({ result, levelTitle, bestStreak, onContinue }) => {
             <span key={n} className="text-3xl" style={{ color: n <= headline.starsAwarded ? "#FFC94A" : "#3A4A63" }}>★</span>
           ))}
         </div>
+
+        <BadgeReveal levelKey={levelKey} levelBadge={levelBadge} newAchievements={newAchievements} />
 
         <div className="mt-6 grid grid-cols-4 gap-2">
           <MetricTile label="First-attempt accuracy" value={`${headline.accuracy}%`} />

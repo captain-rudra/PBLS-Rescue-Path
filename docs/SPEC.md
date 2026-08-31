@@ -171,6 +171,17 @@ non-locked states, not only once the level is mastered: below 80% = 0; 80–89% 
 while still `remediating` or `failed` — that star is permanent and will not become
 three just because the level is eventually mastered.
 
+**Badge shelf.** Below the header the dashboard carries a shelf of every badge the path
+can award: the four level badges (`l1` Scene Scout, `l2` CPR Champion, `l3` Life Saver,
+`l4` Team Leader) and the global achievements (§7). The prelevel has no badge — per the
+corrected source document its `badge` is null — so it contributes no tile and the shelf
+shows no empty slot where one would sit. A level badge counts as earned once the level
+is `complete` (mastered at 100%); an achievement's earned state comes from the server
+(§7). An earned badge is full colour on a gold-rimmed disc; an unearned one sits in the
+same place but locked — greyscale, dimmed, a small padlock — so the player can see
+what's ahead. Each badge has its own iconography, not one shape recoloured. The shelf
+is display only; earning is decided server-side.
+
 **Mission briefing.** Shown once on entering a level. Scene name, level title, the
 scenario line, the full objectives list from the level document, mission parameters
 (question count, formats, pass mark, badge), and a Begin rescue button — except when
@@ -202,6 +213,13 @@ first-attempt points), the objectives list and missed items marked against the
 all correct and would show nothing useful — the two derived counts (restarts,
 remediation rounds), and a single continue action. An objective is ticked only when
 every item mapped to it was answered correctly on that first attempt.
+
+The badge earned by mastering this level is revealed here with a one-shot animation as
+the card opens — full colour, a light sweep across the disc, the rim pulsing once. The
+prelevel has no badge, so nothing is shown there and no slot is left empty. If this
+submit also newly unlocked a global achievement (§7 — in this build only BLS Expert,
+and only ever on the fifth level's first attempt), that badge is revealed just below
+it. The reveal collapses to the final state under `prefers-reduced-motion`.
 
 **Pause menu.** Objectives, mute toggle, restart level, exit to path. No skip.
 Exiting mid-level preserves the resume point but records the attempt as incomplete.
@@ -575,6 +593,7 @@ correct, feedback{text,videoUrl}, points, status, version, supersedes, deletedAt
 createdBy, updatedBy`
 
 **`levels`** — `order, key, title, scene, role, objectives[], passMark, badge, status, deletedAt`
+— `badge` is nullable; the prelevel has none (§2.6, §13).
 
 **`admins`** — `email, passwordHash, name, role, active, lastLoginAt, createdBy`
 
@@ -620,6 +639,45 @@ questionVersion, levelId, given, isCorrect, partialScore, shownAt, firstInteract
 answeredAt, hiddenMs, mediaReplays, isRetry, serverReceivedAt`
 
 **`auditlog`** — `actorId, actorRole, action, target{kind,id}, before, after, reason, at, ip`
+
+### Achievements — derived, not a collection
+
+The four level badges live on the `levels` documents. Path-wide awards that the level
+schema can't hold are **not stored anywhere** — there is no `achievements` collection
+and no per-participant "earned" flag. Each is a pure function of the `attempts` and
+`responses` collections, recomputed on every read, the same discipline as the level
+headline and star bands (§3.7). A stored flag is one more figure that can fall out of
+step with the evidence it summarises.
+
+Exposed at `GET /play/achievements` (this participant only, from the token) and, for
+the reveal, as `newAchievements` on the `POST /play/attempts/:id/submit` response —
+the achievements earned *after* this submit minus those earned *before* it.
+
+**BLS Expert** — the one such award in this build. Earned for scoring **above 95%
+overall on first contact with the material, across every level**.
+
+- **"Overall" is the item-weighted pooled first-attempt accuracy:** total questions
+  answered correctly on the frozen first attempt (`attemptNo: 1`) of each of the five
+  levels, divided by the total number of questions across those five first attempts.
+  Not the unweighted mean of the five per-level accuracies — pooling by item stops a
+  short level (prelevel, `l4`) from swinging the figure out of proportion to how much
+  of the instrument it represents. The comparison is on the exact ratio; the API also
+  returns it rounded to one decimal for display.
+- **First attempt only.** Every level is designed to end at 100% once remediation
+  finishes, so an "overall accuracy" measured after remediation would be 100% for
+  every participant and the award would carry no information. It has to measure
+  first-contact performance to mean anything in the results chapter.
+- **Requires a submitted first attempt for all five levels.** Until then there is no
+  defensible overall figure and the award is simply not yet earned. If a level's
+  `attemptNo: 1` was abandoned rather than submitted it has no frozen first attempt
+  anywhere in the system (§2.3), and the award stays out of reach until that level is
+  played through — the conservative reading.
+- **`earnedAt`** is the `submittedAt` of the last of the five first attempts, which by
+  the unlock ordering is always `l4`'s.
+
+Both numbers in the criterion — the 95% threshold and the requirement that every level
+reach 100% before the next unlocks — are the design decisions still pending supervisor
+sign-off (§13); the derivation above is written to make either easy to revise.
 
 ---
 

@@ -15,6 +15,7 @@ import {
   remediationRoundFor,
   outcomeFor
 } from "../../services/scoring.js";
+import { loadAchievementInputs, summarizeAchievements } from "../../services/achievements.js";
 
 const router = Router();
 
@@ -260,6 +261,19 @@ router.post("/:id/submit", async (request, response) => {
     headline = { ...summary.headline, ...firstPerformance };
   }
 
+  // Global achievements (SPEC 2.6, 7). `newAchievements` is what this
+  // submit just unlocked — computed by diffing the rollup with this
+  // attempt against the rollup without it — so the result card can play a
+  // reveal "at the moment it is earned". Under the current single
+  // achievement (BLS Expert) this can only ever fire on the fifth level's
+  // first attempt, but the diff keeps it correct for anything added later.
+  const [achievementsAfter, achievementsBefore] = await Promise.all([
+    loadAchievementInputs(request.participant._id).then(summarizeAchievements),
+    loadAchievementInputs(request.participant._id, { excludeAttemptId: attempt._id }).then(summarizeAchievements)
+  ]);
+  const earnedBeforeKeys = new Set(achievementsBefore.filter(a => a.earned).map(a => a.key));
+  const newAchievements = achievementsAfter.filter(a => a.earned && !earnedBeforeKeys.has(a.key));
+
   response.json({
     attempt: {
       attemptId: String(attempt._id),
@@ -283,7 +297,12 @@ router.post("/:id/submit", async (request, response) => {
     remediationCount: summary.remediationCount,
     objectives,
     missedItems,
-    unlockedNextLevelKey
+    unlockedNextLevelKey,
+    // The level badge is earned on a mastered submit; null for the
+    // prelevel, which the corrected source document gives no badge.
+    badge: outcome === ATTEMPT_OUTCOMES.MASTERED ? level.badge ?? null : null,
+    newAchievements,
+    achievements: achievementsAfter
   });
 });
 

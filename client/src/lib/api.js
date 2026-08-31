@@ -20,6 +20,8 @@ const request = async (method, path, body) => {
 
 export const getLevels = () => request("GET", "/levels");
 
+export const getAchievements = () => request("GET", "/achievements");
+
 export const startAttempt = (levelKey, kind = "first") => request("POST", "/attempts", { levelKey, kind });
 
 export const postResponse = payload => request("POST", "/responses", payload);

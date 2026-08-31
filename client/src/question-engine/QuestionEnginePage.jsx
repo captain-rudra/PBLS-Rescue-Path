@@ -158,6 +158,8 @@ export const QuestionEnginePage = () => {
       <ResultCard
         result={state.completion}
         levelTitle={state.level.title}
+        levelKey={state.level.key}
+        levelBadge={state.level.badge}
         bestStreak={state.bestStreak}
         onContinue={handleResultContinue}
       />

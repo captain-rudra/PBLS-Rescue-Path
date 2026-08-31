@@ -646,8 +646,38 @@ const testEveryLevelAndQuestionType = async () => {
       if (step.key === "l3") {
         assert.ok(questions.some(q => q.type === "split_screen"), "l3 must serve its split_screen item (l3:21)");
       }
+
+      // Level badge on a mastered submit: null for the prelevel (the
+      // corrected source gives it none — the UI must show no empty slot),
+      // the level's own seeded badge otherwise.
+      const seededLevel = await Level.findOne({ key: step.key });
+      assert.equal(submitted.badge, seededLevel.badge ?? null, `${step.key} mastered submit must return its seeded badge`);
+      if (step.key === "prelevel") assert.equal(submitted.badge, null, "the prelevel has no badge");
+
+      // Global achievement (SPEC 2.6/7): BLS Expert can only be newly
+      // earned on the FIFTH level's first attempt — never before (fewer
+      // than five frozen first attempts exist), never after (first-attempt
+      // figures are frozen).
+      const newKeys = (submitted.newAchievements || []).map(a => a.key);
+      assert.deepEqual(
+        newKeys,
+        step.key === "l4" ? ["bls_expert"] : [],
+        step.key === "l4"
+          ? "mastering l4 first-try at 100% must newly earn BLS Expert on this submit"
+          : `${step.key} submit must not newly earn any achievement yet`
+      );
+
       log(`${step.key} mastered: ${questions.length} questions, types ${[...new Set(questions.map(q => q.type))].sort().join("/")}`);
     }
+
+    // BLS Expert is now earned and readable from the dedicated endpoint,
+    // with a 100% pooled first-attempt accuracy across all five levels.
+    const { body: ach } = await request("GET", "/play/achievements");
+    const blsExpert = ach.achievements.find(a => a.key === "bls_expert");
+    assert.ok(blsExpert.earned, "BLS Expert must be earned after five first-try 100% levels");
+    assert.ok(blsExpert.earnedAt, "BLS Expert must carry an earnedAt timestamp");
+    assert.equal(blsExpert.progress.levelsWithFirstAttempt, 5);
+    assert.equal(blsExpert.progress.overallFirstAttemptAccuracy, 100, "pooled first-attempt accuracy across all five levels is 100%");
 
     for (const type of ["mcq", "video_mcq", "animation_mcq", "drag_drop", "sequence", "split_screen"]) {
       assert.ok(servedTypes.has(type), `question type '${type}' was never served end-to-end (served: ${[...servedTypes].sort().join(", ")})`);
@@ -663,7 +693,59 @@ const testEveryLevelAndQuestionType = async () => {
     assert.ok(servedIds.every(id => !draftIds.has(id)), "no draft question may ever be served to a play attempt");
     assert.equal(servedIds.length, 10 + 9 + 19 + 21 + 8, "total questions served across all five levels must equal the published count");
 
-    log(`coverage sweep OK: all 5 levels mastered, unlock chain intact, types exercised: ${[...servedTypes].sort().join(", ")}`);
+    log(`coverage sweep OK: all 5 levels mastered, unlock chain intact, BLS Expert earned, types exercised: ${[...servedTypes].sort().join(", ")}`);
+  } finally {
+    process.env.DEV_PARTICIPANT_ID = savedDevId;
+    await Response.deleteMany({ participantId: scratchParticipant._id });
+    await Attempt.deleteMany({ participantId: scratchParticipant._id });
+    await Participant.deleteOne({ _id: scratchParticipant._id });
+  }
+};
+
+// BLS Expert is measured on FIRST contact, not on the eventual 100% every
+// level reaches through remediation (SPEC 7). A participant who scrapes a
+// level through on a poor first attempt and only later masters it must not
+// end up with the achievement — otherwise, since every path ends at 100%,
+// everyone would get it. This drives one level's FIRST attempt well below
+// the bar, masters everything, and asserts BLS Expert stays locked with a
+// sub-95 pooled figure.
+const testBlsExpertMeasuresFirstAttemptOnly = async () => {
+  const scratchParticipant = await Participant.create({ code: `E2E-BLS-${Date.now()}`, arm: "E", sessionId: session._id });
+  const savedDevId = process.env.DEV_PARTICIPANT_ID;
+  process.env.DEV_PARTICIPANT_ID = String(scratchParticipant._id);
+  try {
+    await masterLevel("prelevel", 10); // 10/10 first try
+
+    // l1 first attempt: 3/9 correct — a genuine fail, far below the pass
+    // mark, so it restarts rather than remediates.
+    const l1First = await request("POST", "/play/attempts", { levelKey: "l1", kind: "first" });
+    assert.equal(l1First.status, 201, JSON.stringify(l1First.body));
+    assert.equal(l1First.body.attempt.attemptNo, 1);
+    await answerQuestions(l1First.body.attempt.attemptId, l1First.body.questions, 3);
+    const l1FirstSubmit = await request("POST", `/play/attempts/${l1First.body.attempt.attemptId}/submit`);
+    assert.equal(l1FirstSubmit.status, 200, JSON.stringify(l1FirstSubmit.body));
+    assert.equal(l1FirstSubmit.body.outcome, "fail");
+    assert.deepEqual(l1FirstSubmit.body.newAchievements, [], "a failing l1 first attempt earns nothing");
+
+    // Restart l1 and every remaining level at a clean 100%.
+    await masterLevel("l1", 9);
+    await masterLevel("l2", 19);
+    await masterLevel("l3", 21);
+    const l4Submit = (await masterLevel("l4", 8)).submitted;
+
+    assert.deepEqual(l4Submit.newAchievements, [], "l4 mastery must NOT earn BLS Expert when the l1 first attempt was only 3/9");
+
+    const { body: ach } = await request("GET", "/play/achievements");
+    const blsExpert = ach.achievements.find(a => a.key === "bls_expert");
+    assert.equal(blsExpert.earned, false, "BLS Expert stays locked when first-contact accuracy is below the bar");
+    assert.equal(blsExpert.earnedAt, null);
+    assert.equal(blsExpert.progress.levelsWithFirstAttempt, 5, "all five levels still have a frozen first attempt");
+    // Pooled first-attempt correct / total: (10 + 3 + 19 + 21 + 8) / (10 + 9 + 19 + 21 + 8) = 61/67
+    const expected = Math.round((61 / 67) * 1000) / 10;
+    assert.equal(blsExpert.progress.overallFirstAttemptAccuracy, expected, `pooled first-attempt accuracy must be ${expected}% (61/67), not the post-remediation 100%`);
+    assert.ok(expected < 95 && expected > 90, "sanity: this scenario really is below the 95% bar");
+
+    log(`BLS Expert correctly withheld: pooled first-attempt accuracy ${expected}% (61/67), not the post-remediation 100%`);
   } finally {
     process.env.DEV_PARTICIPANT_ID = savedDevId;
     await Response.deleteMany({ participantId: scratchParticipant._id });
@@ -773,6 +855,7 @@ const run = async () => {
     await testMeRecords();
     await testAdminTrail();
     await testEveryLevelAndQuestionType();
+    await testBlsExpertMeasuresFirstAttemptOnly();
     await testHotspotVideoScored();
     await printResultingDocuments();
     log("ALL CHECKS PASSED");

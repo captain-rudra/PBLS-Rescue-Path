@@ -23,7 +23,8 @@ export default defineConfig({
       "/play/levels": { target: apiTarget, changeOrigin: true },
       "/play/attempts": { target: apiTarget, changeOrigin: true },
       "/play/responses": { target: apiTarget, changeOrigin: true },
-      "/play/me": { target: apiTarget, changeOrigin: true }
+      "/play/me": { target: apiTarget, changeOrigin: true },
+      "/play/achievements": { target: apiTarget, changeOrigin: true }
     }
   }
 });

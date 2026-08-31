@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { getLevels } from "../lib/api.js";
+import { getLevels, getAchievements } from "../lib/api.js";
 import { PathNode } from "./PathNode.jsx";
+import { BadgeShelf } from "./BadgeShelf.jsx";
 import { MuteToggle } from "../components/MuteToggle.jsx";
 import { useMute } from "../hooks/useMute.js";
 
@@ -15,6 +16,7 @@ const AMPLITUDE = 26; // percent either side of center
 
 export const Dashboard = () => {
   const [levels, setLevels] = useState(null);
+  const [achievements, setAchievements] = useState([]);
   const [error, setError] = useState(null);
   const [muted, toggleMuted] = useMute();
   const navigate = useNavigate();
@@ -28,6 +30,10 @@ export const Dashboard = () => {
     getLevels()
       .then(response => setLevels(response.levels))
       .catch(err => setError(err.message));
+    // The shelf is secondary — if it fails, the path still renders.
+    getAchievements()
+      .then(response => setAchievements(response.achievements))
+      .catch(() => setAchievements([]));
   }, []);
 
   // A callback ref, not a plain ref + effect: the measured div only mounts
@@ -76,6 +82,8 @@ export const Dashboard = () => {
         </div>
         <MuteToggle muted={muted} onToggle={toggleMuted} />
       </header>
+
+      {levels && <BadgeShelf levels={levels} achievements={achievements} />}
 
       {error && <p className="px-4 py-6 text-sm text-[#FF6B5B]">{error}</p>}
       {!levels && !error && <p className="px-4 py-6 text-sm text-slate-500">Loading the path…</p>}
