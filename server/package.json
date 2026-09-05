@@ -10,6 +10,7 @@
     "seed:validate": "node ../seed/seed.js --validate-only",
     "test:play": "node ../scripts/e2e-play.js",
     "test:auth-guards": "node ../scripts/test-auth-guards.js",
+    "test:admin-content": "node ../scripts/e2e-admin-content.js",
     "create-super-admin": "node ../scripts/create-super-admin.js"
   },
   "dependencies": {

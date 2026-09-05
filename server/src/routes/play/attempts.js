@@ -144,7 +144,10 @@ router.post("/", async (request, response) => {
       if (missedQuestionIds.length === 0) return sendError(response, 400, "NO_REMEDIATION_DUE", "The most recent attempt has no missed items");
     }
 
-    let questions = await Question.find({ levelKey: level.key, status: { $in: [STATUS.PUBLISHED, STATUS.LOCKED] }, deletedAt: null }).sort({ sequence: 1 });
+    // supersededBy: null is the "current, active version of this slot"
+    // filter (SPEC 4.8) — without it, a forked, superseded question would
+    // sit alongside its replacement and this level would serve both.
+    let questions = await Question.find({ levelKey: level.key, status: { $in: [STATUS.PUBLISHED, STATUS.LOCKED] }, deletedAt: null, supersededBy: null }).sort({ sequence: 1 });
     if (missedQuestionIds) {
       const missedSet = new Set(missedQuestionIds);
       questions = questions.filter(q => missedSet.has(String(q._id)));

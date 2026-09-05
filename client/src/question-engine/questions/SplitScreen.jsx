@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { OptionsList } from "../OptionsList.jsx";
 
-const SidePlayer = ({ side, videoRef, muted, onLoadedMetadata, onTimeUpdate }) => {
+const SidePlayer = ({ side, videoRef, muted, posterUrl, onLoadedMetadata, onTimeUpdate }) => {
   if (!side.videoUrl) {
     return (
       <div className="rounded-lg border border-dashed border-[#3A4A63] bg-[#1E3050] p-3">
@@ -21,6 +21,7 @@ const SidePlayer = ({ side, videoRef, muted, onLoadedMetadata, onTimeUpdate }) =
       <video
         ref={videoRef}
         src={side.videoUrl}
+        poster={posterUrl || undefined}
         muted={muted}
         playsInline
         className="max-h-56 w-full"
@@ -31,11 +32,17 @@ const SidePlayer = ({ side, videoRef, muted, onLoadedMetadata, onTimeUpdate }) =
   );
 };
 
-// Two synchronised players, one shared scrub bar (SPEC 3.4). sides[].parameters
-// is the source-document fallback, shown whenever a side has no videoUrl.
+// Two synchronised players, one shared scrub bar (SPEC 3.4). The two clip
+// URLs live on media.videoUrl/media.videoUrlB (one clip per side) rather
+// than on sides[] itself — sides[].parameters is the source-document
+// fallback, shown for whichever side has no clip. This is also exactly
+// what the admin builder's split_screen fields (videoUrl, videoUrlB) edit,
+// so "Preview as player" (SPEC 4.5) renders from the same place the
+// builder writes to.
 export const SplitScreen = ({ question, onFirstInteraction, onCommit, result }) => {
-  const sides = question.sides || [];
-  const anyVideo = sides.some(side => side.videoUrl);
+  const rawSides = question.sides || [];
+  const sides = rawSides.map((side, index) => ({ ...side, videoUrl: index === 0 ? question.media?.videoUrl : question.media?.videoUrlB }));
+  const anyVideo = Boolean(question.media?.videoUrl || question.media?.videoUrlB);
   const videoRefs = useRef([]);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -81,6 +88,7 @@ export const SplitScreen = ({ question, onFirstInteraction, onCommit, result }) 
             key={side.label || index}
             side={side}
             muted={index !== 0}
+            posterUrl={question.media?.posterUrl}
             videoRef={el => {
               videoRefs.current[index] = el;
             }}

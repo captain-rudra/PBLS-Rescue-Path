@@ -76,9 +76,14 @@ const seed = async () => {
     levelIds.set(level.key, saved._id);
   }
   for (const question of preparedQuestions) {
+    // supersededBy: null targets the CURRENT, active version of this slot
+    // (SPEC 4.8) — if a locked edit has since forked it, this must update
+    // the live fork, never the frozen row it left behind, and the partial
+    // unique index on (levelKey, sequence, supersededBy: null,
+    // deletedAt: null) guarantees at most one document can ever match.
     await Question.findOneAndUpdate(
-      { levelKey: question.levelKey, sequence: question.sequence },
-      { $set: { ...question, levelId: levelIds.get(question.levelKey) }, $setOnInsert: { version: 1, deletedAt: null } },
+      { levelKey: question.levelKey, sequence: question.sequence, supersededBy: null, deletedAt: null },
+      { $set: { ...question, levelId: levelIds.get(question.levelKey) }, $setOnInsert: { version: 1, supersededBy: null, deletedAt: null } },
       { upsert: true, returnDocument: "after", runValidators: true }
     );
   }

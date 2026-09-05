@@ -19,7 +19,9 @@ router.get("/", async (request, response) => {
       levelId: { $in: levels.map(l => l._id) }
     }),
     Question.aggregate([
-      { $match: { levelKey: { $in: levels.map(l => l.key) }, status: { $in: [STATUS.PUBLISHED, STATUS.LOCKED] }, deletedAt: null } },
+      // supersededBy: null — only the current, active version of each slot
+      // (SPEC 4.8); a forked-away historical row must not double-count.
+      { $match: { levelKey: { $in: levels.map(l => l.key) }, status: { $in: [STATUS.PUBLISHED, STATUS.LOCKED] }, deletedAt: null, supersededBy: null } },
       { $group: { _id: "$levelKey", count: { $sum: 1 }, types: { $addToSet: "$type" } } }
     ])
   ]);

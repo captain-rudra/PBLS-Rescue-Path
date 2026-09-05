@@ -6,7 +6,7 @@
 import { responseDamage, vitalsFromDamage } from "../../../shared/vitals.js";
 import { ATTEMPT_OUTCOMES } from "../../../shared/constants.js";
 
-const OPTION_BASED_TYPES = new Set(["mcq", "video_mcq", "animation_mcq", "split_screen", "hotspot_video"]);
+export const OPTION_BASED_TYPES = new Set(["mcq", "video_mcq", "animation_mcq", "split_screen", "hotspot_video"]);
 
 const SEQUENCE_POINTS_PER_ROW = 15;
 const SEQUENCE_FULL_ORDER_BONUS = 40;
