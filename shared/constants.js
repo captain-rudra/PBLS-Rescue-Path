@@ -44,3 +44,18 @@ export const ATTEMPT_KINDS = Object.freeze(["first", "remediation"]);
 // 100% unlocks the next level. Never stored — always derived from
 // (accuracy, level.passMark) so it can't drift out of sync with them.
 export const ATTEMPT_OUTCOMES = Object.freeze({ FAIL: "fail", REMEDIATE: "remediate", MASTERED: "mastered" });
+
+// Two completely separate token systems (CLAUDE.md "Auth model"). Every
+// guard checks `aud` first, before role or anything else — a token issued
+// for one audience must never satisfy a route guarded for the other.
+export const TOKEN_AUDIENCE = Object.freeze({ ADMIN: "admin", PLAY: "play" });
+
+export const ADMIN_TOKEN_TTL = "8h";
+export const PARTICIPANT_TOKEN_TTL = "6h";
+
+// SPEC 6.3 sign-in guards.
+export const MAX_FAILED_PIN_ATTEMPTS = 5;
+export const PIN_LOCK_MINUTES = 10;
+export const SIGNIN_RATE_LIMIT_PER_MINUTE = 10;
+
+export const BCRYPT_SALT_ROUNDS = 10;

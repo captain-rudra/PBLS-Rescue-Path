@@ -28,8 +28,22 @@ import Participant from "../server/src/models/Participant.js";
 import Admin from "../server/src/models/Admin.js";
 import Attempt from "../server/src/models/Attempt.js";
 import Response from "../server/src/models/Response.js";
+import { hashSecret } from "../server/src/services/auth.js";
 
 const log = (...args) => console.log("[e2e-play]", ...args);
+
+// The suite's hundreds of existing assertions all drive the API with no
+// Authorization header at all, resolving the participant/admin via
+// DEV_PARTICIPANT_ID/DEV_ADMIN_ID (see requireParticipant.js/
+// requireAdmin.js) — rewriting every one of them to carry a real token
+// would be enormous churn for no coverage gain, since that plumbing is
+// identical regardless of which participant/admin id it resolves to. This
+// flag is what keeps that bypass available in this process; the two real
+// auth tests below (testRealSignInPath, testTokenAudienceGuard) are what
+// actually exercise real sign-in and real token verification.
+process.env.ALLOW_DEV_AUTH_BYPASS = "true";
+
+const TEST_ADMIN_PASSWORD = "e2e-test-password-123";
 
 const correctGivenFor = question => {
   if (question.type === "drag_drop") {
@@ -73,10 +87,12 @@ const createdAttemptIds = [];
 const SCRATCH_QUESTION_LEVEL_KEY = "l2";
 const SCRATCH_QUESTION_SEQUENCE = 9999;
 
-const request = async (method, path, body) => {
+const request = async (method, path, body, { token } = {}) => {
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${baseUrl}${path}`, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body)
   });
   const json = await res.json().catch(() => null);
@@ -156,7 +172,7 @@ const setup = async () => {
 
   admin = await Admin.create({
     email: `e2e-admin-${Date.now()}@example.test`,
-    passwordHash: "not-a-real-hash",
+    passwordHash: await hashSecret(TEST_ADMIN_PASSWORD),
     name: "E2E Admin",
     role: "super_admin"
   });
@@ -905,6 +921,128 @@ const testHotspotVideoScored = async () => {
   }
 };
 
+// Real sign-in path (CLAUDE.md Auth model / SPEC 6.3), exercised through
+// the actual API rather than the DEV_PARTICIPANT_ID bypass every other
+// test in this file uses: first sign-in forks into setting a PIN, a wrong
+// PIN is rejected, five wrong PINs locks the code for a cool-down window,
+// and a second sign-in replaces the first device's session — the same
+// activeJti mechanism an instant kick will later reuse (CLAUDE.md).
+const testRealSignInPath = async () => {
+  const code = `E2E-AUTH-${Date.now()}`;
+  const scratchParticipant = await Participant.create({ code, arm: "E", sessionId: session._id });
+  try {
+    // First sign-in: no PIN set yet, code alone forks into "set a PIN" —
+    // identity was already verified in person when the slip was handed
+    // out (CLAUDE.md), so the code is the only credential needed here.
+    const firstLogin = await request("POST", "/auth/play/login", { code });
+    assert.equal(firstLogin.status, 200, JSON.stringify(firstLogin.body));
+    assert.equal(firstLogin.body.needsPin, true);
+
+    const setPinWrongFormat = await request("POST", "/auth/play/set-pin", { code, pin: "12" });
+    assert.equal(setPinWrongFormat.status, 400, "a non-4-digit pin must be rejected");
+
+    const setPin = await request("POST", "/auth/play/set-pin", { code, pin: "1234" });
+    assert.equal(setPin.status, 200, JSON.stringify(setPin.body));
+    assert.ok(setPin.body.token, "set-pin must issue a token, same as a successful login");
+    const firstToken = setPin.body.token;
+
+    const cannotSetAgain = await request("POST", "/auth/play/set-pin", { code, pin: "5678" });
+    assert.equal(cannotSetAgain.status, 409, "set-pin must refuse once a PIN already exists");
+
+    // The real token actually authenticates a real /play route — not the
+    // DEV_PARTICIPANT_ID bypass every other test in this file relies on.
+    const levelsWithToken = await request("GET", "/play/levels", undefined, { token: firstToken });
+    assert.equal(levelsWithToken.status, 200, JSON.stringify(levelsWithToken.body));
+    assert.equal(levelsWithToken.body.levels.find(l => l.key === "prelevel").state, "active");
+
+    const me = await request("GET", "/auth/me", undefined, { token: firstToken });
+    assert.equal(me.status, 200);
+    assert.equal(me.body.aud, "play");
+    assert.equal(me.body.participant.code, code);
+
+    // A second sign-in replaces activeJti — the first token is superseded.
+    const secondLogin = await request("POST", "/auth/play/login", { code, pin: "1234" });
+    assert.equal(secondLogin.status, 200, JSON.stringify(secondLogin.body));
+    assert.equal(secondLogin.body.signedOutOtherDevice, true, "a second sign-in must flag that it replaced a live session");
+    const secondToken = secondLogin.body.token;
+    assert.notEqual(secondToken, firstToken);
+
+    const firstTokenNowRejected = await request("GET", "/play/levels", undefined, { token: firstToken });
+    assert.equal(firstTokenNowRejected.status, 401, "the superseded first token must be rejected once a second device has signed in");
+    assert.equal(firstTokenNowRejected.body.error.code, "SESSION_SUPERSEDED");
+
+    const secondTokenWorks = await request("GET", "/play/levels", undefined, { token: secondToken });
+    assert.equal(secondTokenWorks.status, 200, "the new token from the second sign-in must work");
+
+    log("real sign-in path OK: set-pin issues a token, a second sign-in supersedes the first device's token");
+  } finally {
+    await Attempt.deleteMany({ participantId: scratchParticipant._id });
+    await Participant.deleteOne({ _id: scratchParticipant._id });
+  }
+
+  // --- Separate participant for the lockout guard, so it starts clean.
+  const lockCode = `E2E-LOCK-${Date.now()}`;
+  const lockParticipant = await Participant.create({ code: lockCode, arm: "E", sessionId: session._id });
+  try {
+    await request("POST", "/auth/play/set-pin", { code: lockCode, pin: "1111" });
+
+    let lastResult;
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      lastResult = await request("POST", "/auth/play/login", { code: lockCode, pin: "0000" }); // always wrong
+      if (attempt < 5) assert.equal(lastResult.status, 401, `attempt ${attempt}: still just a wrong PIN, not locked yet`);
+    }
+    assert.equal(lastResult.status, 423, "the 5th consecutive wrong PIN must lock the code");
+    assert.equal(lastResult.body.error.code, "PARTICIPANT_LOCKED");
+
+    const lockedEvenWithRightPin = await request("POST", "/auth/play/login", { code: lockCode, pin: "1111" });
+    assert.equal(lockedEvenWithRightPin.status, 423, "the code must stay locked even against the correct PIN until the lock window passes");
+
+    const refreshed = await Participant.findById(lockParticipant._id);
+    assert.ok(refreshed.lockedUntil > new Date(), "lockedUntil must be set roughly ten minutes out");
+    assert.equal(refreshed.failedPinCount, 0, "failedPinCount resets once the lock itself is set");
+
+    log("five wrong PINs correctly locked the code for the cool-down window, even against the right PIN");
+  } finally {
+    await Participant.deleteOne({ _id: lockParticipant._id });
+  }
+};
+
+// The non-negotiable rule (CLAUDE.md): a token's audience is checked
+// FIRST, before role or anything else — a participant token must never
+// satisfy an admin route, and an admin token must never satisfy a play
+// route. Both directions, with real tokens from real sign-in, not the
+// DEV_*_ID bypass.
+const testTokenAudienceGuard = async () => {
+  const code = `E2E-AUD-${Date.now()}`;
+  const scratchParticipant = await Participant.create({ code, arm: "E", sessionId: session._id });
+  try {
+    const setPin = await request("POST", "/auth/play/set-pin", { code, pin: "2468" });
+    assert.equal(setPin.status, 200, JSON.stringify(setPin.body));
+    const participantToken = setPin.body.token;
+
+    const adminLogin = await request("POST", "/auth/admin/login", { email: admin.email, password: TEST_ADMIN_PASSWORD });
+    assert.equal(adminLogin.status, 200, JSON.stringify(adminLogin.body));
+    const adminToken = adminLogin.body.token;
+
+    const participantTokenOnAdminRoute = await request(
+      "GET",
+      `/admin/records/trail?participantId=${participant._id}&levelKey=l1`,
+      undefined,
+      { token: participantToken }
+    );
+    assert.equal(participantTokenOnAdminRoute.status, 401, "a participant token must never satisfy an admin route");
+    assert.equal(participantTokenOnAdminRoute.body.error.code, "WRONG_AUDIENCE");
+
+    const adminTokenOnPlayRoute = await request("GET", "/play/levels", undefined, { token: adminToken });
+    assert.equal(adminTokenOnPlayRoute.status, 401, "an admin token must never satisfy a play route");
+    assert.equal(adminTokenOnPlayRoute.body.error.code, "WRONG_AUDIENCE");
+
+    log("token audience guard OK: participant token rejected on admin route, admin token rejected on play route");
+  } finally {
+    await Participant.deleteOne({ _id: scratchParticipant._id });
+  }
+};
+
 const printResultingDocuments = async () => {
   const attempts = await Attempt.find({ _id: { $in: createdAttemptIds } }).lean();
   const responses = await Response.find({ attemptId: { $in: createdAttemptIds } }).lean();
@@ -930,6 +1068,8 @@ const run = async () => {
     await testBlsExpertMeasuresFirstAttemptOnly();
     await testLevelReview();
     await testHotspotVideoScored();
+    await testRealSignInPath();
+    await testTokenAudienceGuard();
     await printResultingDocuments();
     log("ALL CHECKS PASSED");
   } finally {

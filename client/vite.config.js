@@ -24,7 +24,11 @@ export default defineConfig({
       "/play/attempts": { target: apiTarget, changeOrigin: true },
       "/play/responses": { target: apiTarget, changeOrigin: true },
       "/play/me": { target: apiTarget, changeOrigin: true },
-      "/play/achievements": { target: apiTarget, changeOrigin: true }
+      "/play/achievements": { target: apiTarget, changeOrigin: true },
+      // No client-side route starts with /auth (unlike /play/*, which
+      // collides with the client's own /play/:levelKey — see above), so
+      // the whole prefix can proxy straight through.
+      "/auth": { target: apiTarget, changeOrigin: true }
     }
   }
 });
