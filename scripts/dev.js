@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-const children = ["dev:server", "dev:client"].map(script => spawn(npm, ["run", script], { stdio: "inherit", shell: false }));
+const isWin = process.platform === "win32";
+const npm = isWin ? "npm.cmd" : "npm";
+const children = ["dev:server", "dev:client"].map(script => spawn(npm, ["run", script], { stdio: "inherit", shell: isWin }));
 
 const stop = () => children.forEach(child => child.kill("SIGINT"));
 process.on("SIGINT", stop);
