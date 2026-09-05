@@ -70,6 +70,11 @@ export const Dashboard = () => {
   const totalHeight = positions.length ? positions[positions.length - 1].y + 140 : 0;
 
   const handleSelect = level => navigate(`/briefing/${level.key}`);
+  // Persistent review entry point (SPEC 2.6): straight to the level's
+  // frozen first attempt, bypassing the briefing entirely. Only rendered by
+  // PathNode when `level.headline` exists, so this is never reachable for a
+  // locked or never-attempted level.
+  const handleReview = level => navigate(`/review/${level.headline.attemptId}`);
 
   return (
     <div className="min-h-screen bg-[#FFF7ED]">
@@ -118,7 +123,7 @@ export const Dashboard = () => {
           )}
 
           {positions.map(({ level, xPercent, y }) => (
-            <PathNode key={level.key} level={level} x={xPercent} y={y} justUnlocked={justUnlockedLevelKey === level.key} onSelect={handleSelect} />
+            <PathNode key={level.key} level={level} x={xPercent} y={y} justUnlocked={justUnlockedLevelKey === level.key} onSelect={handleSelect} onReview={handleReview} />
           ))}
         </div>
       )}

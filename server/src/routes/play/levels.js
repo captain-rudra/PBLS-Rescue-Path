@@ -3,7 +3,8 @@ import Level from "../../models/Level.js";
 import Question from "../../models/Question.js";
 import Attempt from "../../models/Attempt.js";
 import { STATUS } from "../../../../shared/constants.js";
-import { computeLevelProgress } from "../../services/scoring.js";
+import { computeLevelProgress, remediationRoundFor } from "../../services/scoring.js";
+import { sendError } from "../../lib/httpError.js";
 
 const router = Router();
 
@@ -52,6 +53,36 @@ router.get("/", async (request, response) => {
       headline,
       restartCount,
       remediationCount
+    }))
+  });
+});
+
+// Lightweight attempt list for the level review's attempt selector (SPEC
+// 2.6): every submitted, non-practice attempt this participant has made on
+// the level, oldest first, with just enough to label each one (kind,
+// remediation round, accuracy) without pulling the full review payload for
+// attempts the participant hasn't chosen to open yet.
+router.get("/:levelKey/attempts", async (request, response) => {
+  const level = await Level.findOne({ key: request.params.levelKey, deletedAt: null, status: { $in: [STATUS.PUBLISHED, STATUS.LOCKED] } });
+  if (!level) return sendError(response, 404, "LEVEL_NOT_FOUND", "No such level");
+
+  const attempts = await Attempt.find({
+    participantId: request.participant._id,
+    levelId: level._id,
+    isPractice: false,
+    status: STATUS.SUBMITTED
+  }).sort({ attemptNo: 1 });
+
+  response.json({
+    attempts: attempts.map(attempt => ({
+      attemptId: String(attempt._id),
+      attemptNo: attempt.attemptNo,
+      kind: attempt.kind,
+      remediationRound: remediationRoundFor(attempt, attempts),
+      accuracy: attempt.accuracy,
+      passed: attempt.passed,
+      starsAwarded: attempt.starsAwarded,
+      submittedAt: attempt.submittedAt
     }))
   });
 });

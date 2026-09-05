@@ -96,6 +96,16 @@ export const MissionBriefing = () => {
             <p className="mt-1 text-[12px] text-slate-500">
               First-attempt score: {level.headline?.accuracy}% ({level.starsAwarded} star{level.starsAwarded === 1 ? "" : "s"}) · restarts: {level.restartCount} · remediation rounds: {level.remediationCount}
             </p>
+            {level.headline?.attemptId && (
+              <button
+                type="button"
+                data-testid="briefing-review"
+                onClick={() => navigate(`/review/${level.headline.attemptId}`)}
+                className="mt-3 w-full rounded-md border border-[#3A4A63]/40 bg-white/60 px-4 py-2.5 text-[13px] font-semibold text-[#16243D] transition hover:bg-white"
+              >
+                Review answers
+              </button>
+            )}
           </div>
         )}
 
@@ -151,6 +161,17 @@ export const MissionBriefing = () => {
             >
               Begin rescue
             </button>
+
+            {level.headline?.attemptId && (
+              <button
+                type="button"
+                data-testid="briefing-review"
+                onClick={() => navigate(`/review/${level.headline.attemptId}`)}
+                className="mt-2 w-full rounded-md border border-[#3A4A63]/40 bg-white/60 px-4 py-2.5 text-[13px] font-semibold text-[#16243D] transition hover:bg-white"
+              >
+                Review answers
+              </button>
+            )}
           </>
         )}
       </div>

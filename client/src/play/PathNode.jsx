@@ -37,12 +37,19 @@ const CAPTIONS = {
   remediating: "Remediation round due"
 };
 
-export const PathNode = ({ level, x, y, justUnlocked, onSelect }) => {
+export const PathNode = ({ level, x, y, justUnlocked, onSelect, onReview }) => {
   const style = STATE_STYLE[level.state] || STATE_STYLE.locked;
   const interactive = level.state !== "locked";
   // Stars are frozen to the first attempt (SPEC 2.3), so they're knowable
   // as soon as one exists — not just once the level is finally mastered.
   const showStars = level.state !== "locked" && level.state !== "active";
+  // A persistent review entry point (SPEC 2.6), separate from the main node
+  // click (which still goes to the briefing to continue/restart/replay).
+  // Gated on `headline` existing rather than on `state`: that's exactly
+  // "has at least one submitted attempt", which is the same test the
+  // server itself uses to decide whether a review exists at all — locked
+  // and never-attempted (`active`) levels have no headline and get no link.
+  const reviewable = Boolean(level.headline);
 
   return (
     <div className="absolute flex -translate-x-1/2 flex-col items-center" style={{ left: `${x}%`, top: y }}>
@@ -89,6 +96,17 @@ export const PathNode = ({ level, x, y, justUnlocked, onSelect }) => {
         <p className="text-[10px] text-slate-500">{level.scene}</p>
         <p className="text-[9px] text-slate-400">{CAPTIONS[level.state] ?? `Pass mark ${level.passMark}%`}</p>
       </div>
+
+      {reviewable && (
+        <button
+          type="button"
+          data-testid={`review-node-${level.key}`}
+          onClick={() => onReview(level)}
+          className="mt-1 text-[9px] font-semibold uppercase tracking-wide text-[#3A4A63] underline underline-offset-2 hover:text-[#16243D]"
+        >
+          Review answers
+        </button>
+      )}
     </div>
   );
 };

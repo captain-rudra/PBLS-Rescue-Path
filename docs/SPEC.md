@@ -171,6 +171,13 @@ non-locked states, not only once the level is mastered: below 80% = 0; 80–89% 
 while still `remediating` or `failed` — that star is permanent and will not become
 three just because the level is eventually mastered.
 
+Every node that already carries a headline — `complete`, `remediating` or `failed`,
+i.e. at least one submitted attempt exists — also carries a small persistent "Review
+answers" link straight into the level review below, independent of the node's own
+click (which still opens the mission briefing to continue, restart, or replay).
+`locked` nodes and never-attempted `active` nodes carry no headline and get no link —
+there is nothing yet to review.
+
 **Badge shelf.** Below the header the dashboard carries a shelf of every badge the path
 can award: the four level badges (`l1` Scene Scout, `l2` CPR Champion, `l3` Life Saver,
 `l4` Team Leader) and the global achievements (§7). The prelevel has no badge — per the
@@ -187,7 +194,10 @@ scenario line, the full objectives list from the level document, mission paramet
 (question count, formats, pass mark, badge), and a Begin rescue button — except when
 the level is already `complete`, which shows the frozen headline (score, accuracy,
 stars, restart and remediation counts) instead, with nothing left to begin. Objectives
-must be reopenable from the pause menu.
+must be reopenable from the pause menu. Whenever the level carries a headline (any
+non-`active`, non-`locked` state), a Review answers button also sits here — alongside
+Begin rescue for `remediating`/`failed`, in place of it for `complete` — as a second,
+persistent route into the level review besides the dashboard node link above.
 
 **Question.** HUD strip on top (level and scene, question counter, vitals bar, live
 ECG, points, streak). Media panel left, question and options right, so the video never
@@ -221,21 +231,49 @@ submit also newly unlocked a global achievement (§7 — in this build only BLS 
 and only ever on the fifth level's first attempt), that badge is revealed just below
 it. The reveal collapses to the final state under `prefers-reduced-motion`.
 
-**Level review.** Reached from the result card ("Review answers"), read-only. Every
-question from the attempt the result card is reporting — the **frozen first attempt**
-(§2.3), the one whose figures the card shows and the one where a given answer can
-differ from the correct one — laid out **in its seeded clinical order**, one after
-another: the stem, the participant's answer, the correct answer, a correct/missed
-marker, and the `feedback.text`. Nothing here is editable, nothing is re-scored, and
-opening it writes no `responses` row. It is not a way to navigate a level: the
-question engine still shows one question at a time, in sequence, with the answer
-locked on selection — reordering or revisiting mid-level would give a question several
-`shownAt` stamps and make time-per-question meaningless, and the item order carries a
-deliberate clinical progression. "Done" returns to the dashboard.
+**Level review.** Read-only, and reachable from three places: the result card ("Review
+answers", immediately after a mastered submit), the dashboard's persistent per-node
+link, and the mission briefing's own Review answers button — the same screen, the same
+route, every time. Every entry point defaults to the level's **frozen first attempt**
+(§2.3) — the one whose figures the result card and dashboard headline both show, and
+the one where a given answer can most meaningfully differ from the correct one — but an
+**attempt selector** beneath the header lists every submitted attempt the participant
+has made on that level (first attempt, any restart, any remediation round, labelled and
+tagged with its own accuracy) so a restart or remediation round can be reviewed too, not
+only the frozen headline.
+
+Each question is laid out **in its pinned clinical order**, one after another: the
+stem, any scenario text, its media if present (otherwise `fallbackText` — the same
+"must still be answerable" rule from §1/CLAUDE.md applies to reviewing it later), the
+participant's answer, the correct answer, a correct/missed marker, and the
+`feedback.text`. Right and wrong are both always shown, never just one or the other,
+and visually distinguished (coral vs green) rather than left for the reader to infer.
+Two question types need more than a single given/correct line to avoid misleading the
+reader:
+
+- **Sequence** shows three rows, not two: the order this participant was actually
+  **presented** (`shownOrder` — the seeded per-participant shuffle, §3.3), the order
+  they **submitted**, and the canonical correct order. Showing only the canonical order
+  next to their submission would imply they saw it in that order, which they may not
+  have; each submitted row is toned by whether that specific position is right, not by
+  a single overall verdict.
+- **Drag and drop** shows every token's placement against its own correct bucket, not
+  just an overall right/wrong for the item — each token is its own line, independently
+  toned, since a drag-and-drop item is scored per token (§3.2, §3.7) and the review
+  should read the same way.
+
+Nothing here is editable, nothing is re-scored, and opening it writes no `responses`
+row. It is not a way to navigate a level: the question engine still shows one question
+at a time, in sequence, with the answer locked on selection — reordering or revisiting
+mid-level would give a question several `shownAt` stamps and make time-per-question
+meaningless, and the item order carries a deliberate clinical progression. "Done"
+returns to the dashboard.
 
 Time spent on this screen is reported to the server and accumulated on the attempt as
 `reviewMs`, kept entirely separate from the timing model (§8) — it never enters
-time-on-task, level time or total time.
+time-on-task, level time or total time. This holds across every entry point and every
+attempt the selector switches to: switching attempts flushes the outgoing attempt's
+`reviewMs` before the incoming one starts its own clock.
 
 **Pause menu.** Objectives, mute toggle, restart level, exit to path. No skip.
 Exiting mid-level preserves the resume point but records the attempt as incomplete.
@@ -733,7 +771,10 @@ its source.
 
 `attempts.reviewMs` (§2.6) is the one duration stored directly rather than derived. It
 sits outside this model on purpose: reviewing answers after a level is finished is not
-time on task, so it must never be added into any figure above.
+time on task, so it must never be added into any figure above — regardless of which of
+the review's three entry points (result card, dashboard node, mission briefing) was
+used to open it, and regardless of how many separate visits or attempt switches it
+accumulates across.
 
 **Clock authority.** On joining, the browser performs an offset handshake against the
 server clock and applies that offset for display only. Every stored timestamp is
