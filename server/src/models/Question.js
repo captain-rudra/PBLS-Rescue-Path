@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import { QUESTION_TYPES, STATUS } from "../../../shared/constants.js";
 
 const optionSchema = new mongoose.Schema({ key: { type: String, required: true }, text: { type: String, required: true } }, { _id: false });
-const mediaSchema = new mongoose.Schema({ videoUrl: String, posterUrl: String, riveSrc: String, loop: Boolean, gateOnFirstPlay: Boolean }, { _id: false });
+const mediaSchema = new mongoose.Schema({ videoUrl: String, videoUrlB: String, posterUrl: String, riveSrc: String, loop: Boolean, gateOnFirstPlay: Boolean, sharedScrub: Boolean }, { _id: false });
 const feedbackSchema = new mongoose.Schema({ text: { type: String, required: true, trim: true }, videoUrl: String }, { _id: false });
 const bucketSchema = new mongoose.Schema({ key: { type: String, required: true }, label: { type: String, required: true } }, { _id: false });
 const itemSchema = new mongoose.Schema({ id: { type: String, required: true }, text: { type: String, required: true }, bucket: String }, { _id: false });
