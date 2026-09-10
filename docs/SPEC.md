@@ -964,6 +964,91 @@ carries that choice in its filename so two files can never be confused.
 Both fall out of the `responses` collection for free, and together they are how the
 instrument itself gets validated in the results chapter rather than merely used.
 
+### Item analysis — exact derivation
+
+Every figure is recomputed per request from the append-only `responses` collection.
+Nothing is stored. This section is the written derivation the numbers are defended
+from; the implementation is `server/src/services/analytics.js`.
+
+**Scope.** A response is *in scope* when `isRetry: false`, its attempt is not
+practice, and its participant is not excluded. `includePractice` and
+`includeExcluded` relax the last two; an optional `sessionId` (matched on the
+attempt) and `arm` narrow further. The same scope drives every records view and
+every export, and the two include choices are written into each export's filename.
+
+**First encounter.** For a participant *p* and question *q*, the *first encounter*
+is *p*'s chronologically earliest in-scope response to *q*, ordered by `answeredAt`.
+Retries are never a first encounter and are dropped before this step. A participant
+who never saw *q* contributes nothing to *q*'s statistics.
+
+**Difficulty.** `p_q = correct_q / n_q`, where `n_q` is the number of participants
+with a first encounter on *q* and `correct_q` is how many of those were correct.
+`null` when `n_q = 0`. This is the classical p-value; higher means easier.
+
+**Total score.** For the discrimination correlation, a participant's total score is
+their **number of first-encounter questions answered correctly within one level** —
+not across the whole instrument. Progression is gated (a level must be mastered
+before the next unlocks, §2.3), so instrument-wide totals conflate "how able" with
+"how far they got": a prelevel-only participant would look weak on every prelevel
+item purely because they have fewer levels to score on. Scoring within the level
+keeps every participant in a given item's correlation on the same item pool. Items
+are scored **dichotomously** (right/wrong) here even when the game awards partial
+credit (drag-and-drop, sequence), because a point-biserial correlates a
+dichotomous item against the total.
+
+**Discrimination (corrected within-level point-biserial).** For question *q* in
+level *L*, over exactly the participants with a first encounter on *q*:
+
+- `x_i ∈ {0, 1}` — participant *i*'s dichotomous score on *q* (first encounter).
+- `y_i = T_{i,L} − x_i` — participant *i*'s within-level total score, **corrected**
+  by removing *q*'s own contribution, where `T_{i,L}` is *i*'s number of correct
+  first encounters in *L*. Correction removes the part-whole inflation an item
+  gets from being inside its own total.
+
+```
+             Σ (x_i − x̄)(y_i − ȳ)
+r_pb(q) = ─────────────────────────────
+          √( Σ(x_i − x̄)²  ·  Σ(y_i − ȳ)² )
+```
+
+This is Pearson's *r* between the two series, computed with **population** moments
+(÷ n, not ÷ (n−1)). It is algebraically identical to the textbook point-biserial
+form `r_pb = (M₁ − M₀) / s_y · √(p·(1−p))` where `M₁`, `M₀` are the mean corrected
+totals of the right- and wrong-on-first-encounter groups, `s_y` is the population
+SD of the corrected total over those same participants, and `p = p_q`.
+
+`r_pb` is `null` (reported as "cannot be computed") when: `n_q < 2`; every
+contributing participant answered *q* the same way (`p_q` is 0 or 1); or the
+corrected totals have no spread (`Σ(y_i − ȳ)² = 0`).
+
+**Reading and the review flag.** Each row carries a plain-language reading built
+from two conventional CTT bands (rules of thumb, tunable in
+`analytics.js` — they are not law):
+
+| Difficulty `p_q` | Label |
+|---|---|
+| `< 0.30` | Hard |
+| `0.30 – 0.85` | Moderate |
+| `> 0.85` | Easy |
+
+| Discrimination `r_pb` | Label |
+|---|---|
+| `≥ 0.30` | Discriminates well |
+| `0.15 – 0.30` | Weak |
+| `< 0.15` (incl. negative) | Does not discriminate |
+| `null` | Cannot be computed |
+
+An item is flagged **needs review** when it is *both* hard (`p_q < 0.30`) *and*
+non-discriminating (`r_pb < 0.15` or `null`). Those are the items whose wording is
+the likely culprit — most participants get them wrong on first contact, and getting
+them right does not track with doing well on the rest of the level.
+
+**Known limitation.** Because the total is within-level, discrimination is only
+meaningful once enough participants have played that level. With a handful of
+participants the estimate is noisy; `n_q` is reported alongside every figure so the
+reader can judge it. Cross-level ability comparison is deliberately not attempted
+here.
+
 ### Exports
 ```
 participants.csv   one per code: arm, totals, state — no labels, no names

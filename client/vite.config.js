@@ -41,7 +41,12 @@ export default defineConfig({
         changeOrigin: true,
         bypass(req) {
           const path = req.url.split("?")[0];
-          const isClientRoute = path === "/admin" || path === "/admin/signin" || path === "/admin/new-question" || /^\/admin\/edit-question\/[^/]+$/.test(path);
+          const isClientRoute =
+            path === "/admin" ||
+            path === "/admin/signin" ||
+            path === "/admin/new-question" ||
+            path === "/admin/records" ||
+            /^\/admin\/edit-question\/[^/]+$/.test(path);
           if (isClientRoute) return path;
         }
       }

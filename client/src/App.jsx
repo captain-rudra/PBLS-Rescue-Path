@@ -11,6 +11,7 @@ import { AdminSignIn } from "./admin/AdminSignIn.jsx";
 import { AdminAuthGate } from "./admin/AdminAuthGate.jsx";
 import { QuestionBank } from "./admin/QuestionBank.jsx";
 import { QuestionBuilder } from "./admin/QuestionBuilder.jsx";
+import { RecordsPage } from "./admin/RecordsPage.jsx";
 import { ADMIN_SIGNED_OUT_EVENT } from "./lib/adminAuth.js";
 
 export const App = () => {
@@ -59,6 +60,10 @@ export const App = () => {
             instead of falling through to the SPA). */}
         <Route path="/admin/new-question" element={<QuestionBuilder />} />
         <Route path="/admin/edit-question/:id" element={<QuestionBuilder />} />
+        {/* Bare /admin/records is the SPA page; /admin/records/participants,
+            /items, /export, /trail are API paths and proxy through. Only
+            the bare path goes in vite.config.js's bypass list. */}
+        <Route path="/admin/records" element={<RecordsPage />} />
       </Route>
     </Routes>
   );

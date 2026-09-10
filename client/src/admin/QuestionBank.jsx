@@ -270,9 +270,14 @@ export const QuestionBank = () => {
             </h1>
             <p className="text-[11px] text-slate-500">{counts ? `${counts.total} question${counts.total === 1 ? "" : "s"} in scope` : "Loading…"}</p>
           </div>
-          <button type="button" onClick={() => navigate("/admin/new-question")} data-testid="new-question" className="rounded-md bg-[#34D399] px-3 py-1.5 text-[13px] font-semibold text-[#16243D]">
-            + New question
-          </button>
+          <div className="flex items-center gap-2">
+            <Link to="/admin/records" data-testid="nav-records" className="rounded-md border border-[#3A4A63]/40 px-3 py-1.5 text-[13px] font-semibold text-[#16243D] hover:bg-white">
+              Records &amp; analytics
+            </Link>
+            <button type="button" onClick={() => navigate("/admin/new-question")} data-testid="new-question" className="rounded-md bg-[#34D399] px-3 py-1.5 text-[13px] font-semibold text-[#16243D]">
+              + New question
+            </button>
+          </div>
         </div>
       </header>
 

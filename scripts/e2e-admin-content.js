@@ -14,6 +14,9 @@ import Level from "../server/src/models/Level.js";
 import Question from "../server/src/models/Question.js";
 import Admin from "../server/src/models/Admin.js";
 import Participant from "../server/src/models/Participant.js";
+import Session from "../server/src/models/Session.js";
+import Attempt from "../server/src/models/Attempt.js";
+import Response from "../server/src/models/Response.js";
 import AuditLog from "../server/src/models/AuditLog.js";
 import { hashSecret, signParticipantToken, newJti } from "../server/src/services/auth.js";
 import { ROLES } from "../shared/constants.js";
@@ -35,6 +38,12 @@ let matrixParticipant;
 const superAdminPassword = "e2e-super-password-123";
 const plainAdminPassword = "e2e-plain-password-123";
 const createdQuestionIds = [];
+
+// Records-and-analytics fixture: a scratch session + level + questions +
+// participants + hand-built attempts and responses, all tagged and torn
+// down here. Everything in /admin/records is scoped by session id in the
+// tests, so it never mixes with any other data in the database.
+const records = { session: null, level: null, participantIds: [], attemptIds: [], questionIds: [] };
 
 const request = async (method, path, body, { token } = {}) => {
   const headers = { "Content-Type": "application/json" };
@@ -102,6 +111,14 @@ const teardown = async () => {
   }
   if (plainAdmin) await Admin.deleteOne({ _id: plainAdmin._id });
   if (matrixParticipant) await Participant.deleteOne({ _id: matrixParticipant._id });
+
+  if (records.attemptIds.length) await Response.deleteMany({ attemptId: { $in: records.attemptIds } });
+  if (records.attemptIds.length) await Attempt.deleteMany({ _id: { $in: records.attemptIds } });
+  if (records.participantIds.length) await Participant.deleteMany({ _id: { $in: records.participantIds } });
+  if (records.questionIds.length) await Question.deleteMany({ _id: { $in: records.questionIds } });
+  if (records.level) await Level.deleteOne({ _id: records.level._id });
+  if (records.session) await Session.deleteOne({ _id: records.session._id });
+
   await disconnectDB();
 };
 
@@ -364,6 +381,11 @@ const adminRouteMatrix = () => [
   { label: "POST   /admin/levels/:id/lock", method: "POST", path: `/admin/levels/${BOGUS_ID()}/lock`, body: {}, superAdminOnly: true },
   { label: "POST   /admin/levels/:id/unlock", method: "POST", path: `/admin/levels/${BOGUS_ID()}/unlock`, body: {}, superAdminOnly: true },
   { label: "POST   /admin/participants/generate", method: "POST", path: "/admin/participants/generate", body: { arm: "NOT_AN_ARM" } },
+  { label: "GET    /admin/sessions", method: "GET", path: "/admin/sessions" },
+  { label: "GET    /admin/records/participants", method: "GET", path: "/admin/records/participants" },
+  { label: "GET    /admin/records/items", method: "GET", path: "/admin/records/items" },
+  // Raw CSV export is super_admin-only (SPEC 4.1: "Raw CSV export | no | yes").
+  { label: "GET    /admin/records/export", method: "GET", path: "/admin/records/export?file=participants", superAdminOnly: true },
   { label: "GET    /admin/records/trail", method: "GET", path: `/admin/records/trail?participantId=${BOGUS_ID()}&levelKey=no-such-level-e2e-matrix` }
 ];
 
@@ -438,6 +460,369 @@ const testArchivedCannotBeEdited = async () => {
   log("archived question correctly refuses further edits");
 };
 
+// --- Records and analytics (SPEC §11) -------------------------------------
+
+// A fully hand-built scratch cohort with numbers small enough to check on
+// paper. One level L (pass mark 60) with four mcq questions; correct
+// answer is always "A". First-encounter grid:
+//
+//        Q1  Q2  Q3  Q4     within-level total (T)
+//   P1    ✓   ✓   ✓   ✗            3
+//   P2    ✓   ✓   ✗   ✗            2
+//   P3    ✓   ✗   ✗   ✗            1
+//   P4    ✗   ✗   ✗   ✗            0
+//
+// Plus P5 (excluded) and P6 (one practice attempt) to exercise the two
+// include toggles. All attempts carry the scratch session id, and every
+// records call in these tests is scoped to it, so nothing else in the
+// database is in view.
+const RECORDS_GRID = {
+  P1: [true, true, true, false],
+  P2: [true, true, false, false],
+  P3: [true, false, false, false],
+  P4: [false, false, false, false]
+};
+const POINTS = 100;
+const BASE_TIME = new Date("2026-01-01T10:00:00.000Z").getTime();
+
+const makeResponse = async ({ attempt, participant, question, correct, index }) => {
+  const shownAt = new Date(BASE_TIME + index * 60_000);
+  const doc = await Response.create({
+    attemptId: attempt._id,
+    participantId: participant._id,
+    sessionId: records.session._id,
+    questionId: question._id,
+    questionVersion: 1,
+    levelId: records.level._id,
+    given: { selected: correct ? "A" : "B" },
+    isCorrect: correct,
+    partialScore: correct ? POINTS : 0,
+    shownAt,
+    firstInteractionAt: new Date(shownAt.getTime() + 2_000),
+    answeredAt: new Date(shownAt.getTime() + 5_000), // timeOnResponse = 5000 - hiddenMs(1000) = 4000
+    hiddenMs: 1_000,
+    isRetry: false
+  });
+  return doc;
+};
+
+const makeAttempt = async ({ participant, correctness, isPractice = false }) => {
+  const correctCount = correctness.filter(Boolean).length;
+  const attempt = await Attempt.create({
+    participantId: participant._id,
+    sessionId: records.session._id,
+    levelId: records.level._id,
+    attemptNo: 1,
+    kind: "first",
+    isPractice,
+    questionIds: records.questionIds,
+    startedAt: new Date(BASE_TIME - 10_000),
+    submittedAt: new Date(BASE_TIME + correctness.length * 60_000),
+    activeMs: correctness.length * 4_000,
+    hiddenMs: correctness.length * 1_000,
+    score: correctCount * POINTS,
+    accuracy: Math.round((correctCount / correctness.length) * 100),
+    passed: correctCount / correctness.length >= 0.6,
+    starsAwarded: 0,
+    status: "submitted"
+  });
+  records.attemptIds.push(attempt._id);
+  for (let i = 0; i < correctness.length; i++) {
+    await makeResponse({ attempt, participant, question: { _id: records.questionIds[i] }, correct: correctness[i], index: i });
+  }
+  return attempt;
+};
+
+const buildRecordsFixture = async () => {
+  records.session = await Session.create({ mode: "open", capacity: 10, levelKeys: ["records-e2e"], status: "ended" });
+  records.level = await Level.create({
+    key: `records-e2e-${Date.now()}`,
+    order: 998,
+    title: "Records scratch level",
+    scene: "Bench",
+    role: "Tester",
+    objectives: ["records obj"],
+    passMark: 60,
+    status: "published"
+  });
+
+  for (let i = 1; i <= 4; i++) {
+    const q = await Question.create({
+      levelId: records.level._id,
+      levelKey: records.level.key,
+      sequence: i,
+      type: "mcq",
+      title: `Records Q${i}`,
+      objective: "records obj",
+      prompt: "Pick A.",
+      options: [{ key: "A", text: "Right" }, { key: "B", text: "Wrong" }],
+      correct: "A",
+      feedback: { text: "A." },
+      points: POINTS,
+      status: "published",
+      version: 1
+    });
+    records.questionIds.push(q._id);
+  }
+
+  const mk = async (codeSuffix, arm, extra = {}) => {
+    const p = await Participant.create({ code: `E2E-RECORDS-${codeSuffix}`, arm, sessionId: records.session._id, ...extra });
+    records.participantIds.push(p._id);
+    return p;
+  };
+
+  const p1 = await mk("P1", "E");
+  const p2 = await mk("P2", "E");
+  const p3 = await mk("P3", "C");
+  const p4 = await mk("P4", "C");
+  const p5 = await mk("P5", "E", { excluded: true, excludeReason: "e2e" });
+  const p6 = await mk("P6", "C");
+
+  await makeAttempt({ participant: p1, correctness: RECORDS_GRID.P1 });
+  await makeAttempt({ participant: p2, correctness: RECORDS_GRID.P2 });
+  await makeAttempt({ participant: p3, correctness: RECORDS_GRID.P3 });
+  await makeAttempt({ participant: p4, correctness: RECORDS_GRID.P4 });
+  await makeAttempt({ participant: p5, correctness: [false] }); // excluded — out of scope unless includeExcluded
+  await makeAttempt({ participant: p6, correctness: [true], isPractice: true }); // practice — out of scope unless includePractice
+
+  log(`records fixture: session ${records.session._id}, 4 questions, 6 participants`);
+};
+
+// Independent reference: the DEFINITIONAL point-biserial
+// (M1 - M0) / sd_pop * sqrt(p*q), a different computational path than the
+// service's Pearson-covariance form. If the two agree the number is
+// trustworthy. `totalByP` is each participant's within-level number
+// correct; `rows` is [{ participantId, isCorrect }] for one question.
+const referencePointBiserial = (rows, totalByP) => {
+  if (rows.length < 2) return null;
+  const g1 = rows.filter(r => r.isCorrect);
+  const g0 = rows.filter(r => !r.isCorrect);
+  if (g1.length === 0 || g0.length === 0) return null;
+  const y = r => (totalByP.get(String(r.participantId)) || 0) - (r.isCorrect ? 1 : 0); // corrected
+  const mean = arr => arr.reduce((s, v) => s + v, 0) / arr.length;
+  const allY = rows.map(y);
+  const my = mean(allY);
+  const varY = mean(allY.map(v => (v - my) ** 2));
+  if (varY === 0) return null;
+  const p = g1.length / rows.length;
+  return ((mean(g1.map(y)) - mean(g0.map(y))) / Math.sqrt(varY)) * Math.sqrt(p * (1 - p));
+};
+
+const assertClose = (actual, expected, message, tol = 1e-9) =>
+  assert.ok(Math.abs(actual - expected) <= tol, `${message}: expected ~${expected}, got ${actual}`);
+
+const parseCsv = text => {
+  const rows = [];
+  let field = "";
+  let row = [];
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"' && text[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (c === '"') {
+        inQuotes = false;
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\r" && text[i + 1] === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+      i++;
+    } else if (c === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += c;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  const header = rows.shift();
+  return rows.filter(r => r.length === header.length).map(r => Object.fromEntries(header.map((h, i) => [h, r[i]])));
+};
+
+const testRecordsAndAnalytics = async () => {
+  await buildRecordsFixture();
+  const sid = String(records.session._id);
+  const superToken = await adminToken(superAdmin.email, superAdminPassword);
+
+  // --- Participants table ------------------------------------------------
+  const { status, body } = await request("GET", `/admin/records/participants?sessionId=${sid}`, undefined, { token: superToken });
+  assert.equal(status, 200, JSON.stringify(body));
+  const byCode = new Map(body.participants.map(p => [p.code, p]));
+
+  assert.ok(byCode.has("E2E-RECORDS-P1"), "P1 present in default scope");
+  assert.ok(!byCode.has("E2E-RECORDS-P5"), "the excluded participant is hidden by default");
+
+  const p1 = byCode.get("E2E-RECORDS-P1");
+  assert.equal(p1.arm, "E");
+  assert.equal(p1.state, "active");
+  assert.equal(p1.attemptCount, 1);
+  assert.equal(p1.wrongCount, 1, "P1 got exactly one wrong (Q4)");
+  assert.equal(p1.retryCount, 0);
+  assert.equal(p1.activeMs, 4 * 4000, "P1 activeMs = 4 responses * (5000 - 1000 hidden)");
+  assert.equal(p1.hiddenMs, 4 * 1000);
+  assert.equal(p1.bestScore, 300);
+  assert.equal(p1.levelsMastered, 0);
+  assert.equal(p1.levels.length, 1);
+  assert.equal(p1.levels[0].attempts[0].missedItems.length, 1, "P1's one missed item is Q4");
+  assert.equal(p1.levels[0].attempts[0].missedItems[0].title, "Records Q4");
+  assert.equal(p1.levels[0].attempts[0].activeMs, 16000, "per-attempt activeMs recomputed from responses, not read off the attempt");
+
+  assert.equal(byCode.get("E2E-RECORDS-P4").wrongCount, 4, "P4 got everything wrong");
+  assert.equal(byCode.get("E2E-RECORDS-P6").attemptCount, 0, "P6's only attempt is practice — not counted by default");
+
+  // --- Include toggles -------------------------------------------------
+  const withExcluded = await request("GET", `/admin/records/participants?sessionId=${sid}&includeExcluded=true`, undefined, { token: superToken });
+  const p5 = new Map(withExcluded.body.participants.map(p => [p.code, p])).get("E2E-RECORDS-P5");
+  assert.ok(p5, "the excluded participant appears once includeExcluded=true");
+  assert.equal(p5.state, "excluded");
+
+  const withPractice = await request("GET", `/admin/records/participants?sessionId=${sid}&includePractice=true`, undefined, { token: superToken });
+  assert.equal(new Map(withPractice.body.participants.map(p => [p.code, p])).get("E2E-RECORDS-P6").attemptCount, 1, "the practice attempt counts once includePractice=true");
+
+  // --- Arm filter ----------------------------------------------------
+  const armE = await request("GET", `/admin/records/participants?sessionId=${sid}&arm=E`, undefined, { token: superToken });
+  const armECodes = armE.body.participants.map(p => p.code).filter(c => c.startsWith("E2E-RECORDS-"));
+  assert.deepEqual(armECodes.sort(), ["E2E-RECORDS-P1", "E2E-RECORDS-P2"], "arm=E returns only the arm-E scratch participants");
+
+  log("participants table OK — totals, state, per-attempt recompute, both include toggles, arm filter");
+
+  // --- Item analysis --------------------------------------------------
+  const items = await request("GET", `/admin/records/items?sessionId=${sid}`, undefined, { token: superToken });
+  assert.equal(items.status, 200, JSON.stringify(items.body));
+  const q = new Map(items.body.items.map(it => [it.sequence, it])); // scratch questions are sequence 1..4
+
+  assert.equal(q.get(1).difficulty, 0.75, "Q1: 3 of 4 right on first encounter");
+  assert.equal(q.get(2).difficulty, 0.5, "Q2: 2 of 4");
+  assert.equal(q.get(3).difficulty, 0.25, "Q3: 1 of 4");
+  assert.equal(q.get(4).difficulty, 0, "Q4: 0 of 4");
+  assert.equal(q.get(1).n, 4);
+
+  // Cross-check discrimination against the independent definitional
+  // formula, on the exact same corrected within-level totals.
+  const totalByP = new Map([
+    [String(records.participantIds[0]), 3],
+    [String(records.participantIds[1]), 2],
+    [String(records.participantIds[2]), 1],
+    [String(records.participantIds[3]), 0]
+  ]);
+  const rowsFor = grid => [0, 1, 2, 3].map((_, pi) => ({ participantId: records.participantIds[pi], isCorrect: grid[pi] }));
+  const grids = [
+    [true, true, true, false], // Q1
+    [true, true, false, false], // Q2
+    [true, false, false, false], // Q3
+    [false, false, false, false] // Q4
+  ];
+  for (let seq = 1; seq <= 4; seq++) {
+    const expected = referencePointBiserial(rowsFor(grids[seq - 1]), totalByP);
+    if (expected === null) {
+      assert.equal(q.get(seq).discrimination, null, `Q${seq} discrimination should be null (degenerate)`);
+    } else {
+      assertClose(q.get(seq).discrimination, expected, `Q${seq} discrimination vs definitional point-biserial`);
+    }
+  }
+  // Literal spot value, checkable by hand: Q2 = 1/sqrt(2).
+  assertClose(q.get(2).discrimination, 1 / Math.sqrt(2), "Q2 discrimination is exactly 1/sqrt(2)", 1e-12);
+
+  assert.equal(q.get(3).needsReview, false, "Q3 is hard but discriminates well — not flagged");
+  assert.equal(q.get(4).discrimination, null, "Q4: everyone wrong -> discrimination cannot be computed");
+  assert.equal(q.get(4).needsReview, true, "Q4 is hard AND non-discriminating -> flagged for review");
+  assert.match(q.get(4).reading, /everyone answered it the same way/i);
+  assert.match(q.get(1).reading, /Easy|Moderate/);
+
+  log("item analysis OK — difficulty exact, discrimination matches an independent point-biserial, review flag correct");
+};
+
+const CSV_HEADERS = {
+  participants: ["code", "arm", "state", "attempts", "wrongCount", "retryCount", "activeMs", "hiddenMs", "bestScore", "levelsPlayed", "levelsMastered"],
+  attempts: ["code", "arm", "levelKey", "attemptNo", "kind", "remediationRound", "outcome", "status", "accuracy", "score", "starsAwarded", "activeMs", "hiddenMs"],
+  responses: ["code", "arm", "levelKey", "attemptNo", "attemptKind", "questionSequence", "questionId", "questionVersion", "isCorrect", "isRetry", "partialScore", "shownAt", "firstInteractionAt", "answeredAt", "hiddenMs"],
+  items: ["questionId", "levelKey", "sequence", "type", "objective", "n", "correct", "difficulty", "discrimination", "needsReview", "reading"]
+};
+const FORBIDDEN_COLUMNS = /name|label|email|phone|pin|jti/i;
+
+const exportCsv = async (file, query, token) => {
+  const res = await fetch(`${baseUrl}/admin/records/export?file=${file}${query}`, { headers: { Authorization: `Bearer ${token}` } });
+  const text = await res.text();
+  const disposition = res.headers.get("content-disposition") || "";
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? null;
+  return { status: res.status, contentType: res.headers.get("content-type"), filename, text, rows: res.status === 200 ? parseCsv(text) : [] };
+};
+
+const testExportsAndHandCheck = async () => {
+  const sid = String(records.session._id);
+  const superToken = await adminToken(superAdmin.email, superAdminPassword);
+
+  // Header + no-PII check on all four.
+  for (const file of Object.keys(CSV_HEADERS)) {
+    const csv = await exportCsv(file, `&sessionId=${sid}`, superToken);
+    assert.equal(csv.status, 200, `${file}.csv must export`);
+    assert.match(csv.contentType || "", /text\/csv/, `${file}.csv content type`);
+    const header = Object.keys(csv.rows[0] || {});
+    assert.deepEqual(header, CSV_HEADERS[file], `${file}.csv columns must be exactly the documented set`);
+    assert.ok(!header.some(h => FORBIDDEN_COLUMNS.test(h)), `${file}.csv must carry no name/label/PII column`);
+  }
+
+  // Filename encodes the include choices (SPEC §11).
+  const outOut = await exportCsv("participants", `&sessionId=${sid}`, superToken);
+  assert.match(outOut.filename, /participants__excluded-out__practice-out__/, "default filename says excluded-out, practice-out");
+  const inIn = await exportCsv("participants", `&sessionId=${sid}&includeExcluded=true&includePractice=true`, superToken);
+  assert.match(inIn.filename, /participants__excluded-in__practice-in__/, "toggled filename says excluded-in, practice-in");
+  assert.match(inIn.filename, /__session-/, "session-scoped export names the session");
+  assert.notEqual(outOut.filename, inIn.filename, "the two exports can never share a filename");
+
+  // Default participants.csv: every non-excluded scratch code (P6 is a row
+  // with 0 attempts — it is a participant, just with only a practice
+  // attempt), and P5 absent because it's excluded.
+  const partCodes = outOut.rows.map(r => r.code).filter(c => c.startsWith("E2E-RECORDS-")).sort();
+  assert.deepEqual(partCodes, ["E2E-RECORDS-P1", "E2E-RECORDS-P2", "E2E-RECORDS-P3", "E2E-RECORDS-P4", "E2E-RECORDS-P6"], "default participants.csv: all non-excluded scratch codes, P5 absent");
+
+  const itemsCsv = await exportCsv("items", `&sessionId=${sid}`, superToken);
+  const itemsBySeq = new Map(itemsCsv.rows.filter(r => r.levelKey === records.level.key).map(r => [r.sequence, r]));
+  assert.equal(itemsBySeq.get("1").difficulty, "0.7500", "items.csv difficulty is the fixed-4dp value");
+  assert.equal(itemsBySeq.get("4").discrimination, "", "items.csv leaves discrimination blank when it can't be computed");
+  assert.equal(itemsBySeq.get("4").needsReview, "true");
+
+  // --- Hand-check responses.csv against the raw Response documents -----
+  const respCsv = await exportCsv("responses", `&sessionId=${sid}`, superToken);
+  const p1 = await Participant.findOne({ code: "E2E-RECORDS-P1" });
+  const p1Attempt = await Attempt.findOne({ participantId: p1._id, sessionId: records.session._id });
+  const p1Docs = await Response.find({ attemptId: p1Attempt._id }).sort({ answeredAt: 1 }).lean();
+  const p1CsvRows = respCsv.rows.filter(r => r.code === "E2E-RECORDS-P1").sort((a, b) => new Date(a.answeredAt) - new Date(b.answeredAt));
+
+  assert.equal(p1CsvRows.length, p1Docs.length, "one responses.csv row per P1 Response document");
+  for (let i = 0; i < p1Docs.length; i++) {
+    const doc = p1Docs[i];
+    const row = p1CsvRows[i];
+    assert.equal(row.questionId, String(doc.questionId), `row ${i}: questionId`);
+    assert.equal(Number(row.questionVersion), doc.questionVersion, `row ${i}: questionVersion`);
+    assert.equal(row.isCorrect, String(doc.isCorrect), `row ${i}: isCorrect`);
+    assert.equal(row.isRetry, String(doc.isRetry), `row ${i}: isRetry`);
+    assert.equal(Number(row.partialScore), doc.partialScore, `row ${i}: partialScore`);
+    assert.equal(new Date(row.shownAt).toISOString(), doc.shownAt.toISOString(), `row ${i}: shownAt`);
+    assert.equal(new Date(row.firstInteractionAt).toISOString(), doc.firstInteractionAt.toISOString(), `row ${i}: firstInteractionAt`);
+    assert.equal(new Date(row.answeredAt).toISOString(), doc.answeredAt.toISOString(), `row ${i}: answeredAt`);
+    assert.equal(Number(row.hiddenMs), doc.hiddenMs, `row ${i}: hiddenMs`);
+  }
+
+  log(`exports OK — four CSVs, exact documented headers, no PII columns, filename encodes the toggles; responses.csv hand-checked field-for-field against ${p1Docs.length} P1 Response documents`);
+};
+
 const run = async () => {
   await setup();
   try {
@@ -450,6 +835,8 @@ const run = async () => {
     await testAdminRouteAuthMatrix();
     await testDeleteArchivesAndAudits();
     await testArchivedCannotBeEdited();
+    await testRecordsAndAnalytics();
+    await testExportsAndHandCheck();
     log("ALL CHECKS PASSED");
   } finally {
     await teardown();
