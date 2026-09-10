@@ -311,8 +311,12 @@ const ItemAnalysisTab = ({ scope }) => {
 
   return (
     <div className="overflow-x-auto">
-      <p className="mb-2 text-[11px] text-slate-500">
+      <p className="mb-1 text-[11px] text-slate-500">
         {data.items.length} items · {flagged} flagged for review (hard <em>and</em> non-discriminating). Formulas: SPEC §11.
+      </p>
+      <p className="mb-2 text-[11px] text-[#FF6B5B]">
+        Indicative, not definitive: with ~40 participants each per-item <span className="font-mono">n</span> is far below the 100+ CTT normally wants
+        for a stable discrimination index. Treat these as a wording-review screen; weight each row by its <span className="font-mono">n</span>.
       </p>
       <table className="w-full text-[12px]">
         <thead className="text-left text-slate-400">

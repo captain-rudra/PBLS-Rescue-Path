@@ -1043,11 +1043,29 @@ non-discriminating (`r_pb < 0.15` or `null`). Those are the items whose wording 
 the likely culprit — most participants get them wrong on first contact, and getting
 them right does not track with doing well on the rest of the level.
 
-**Known limitation.** Because the total is within-level, discrimination is only
-meaningful once enough participants have played that level. With a handful of
-participants the estimate is noisy; `n_q` is reported alongside every figure so the
-reader can judge it. Cross-level ability comparison is deliberately not attempted
-here.
+**Known limitations — report these figures as indicative, not definitive.**
+
+*Sample size.* The study runs with roughly 40 participants total. That is the
+ceiling on `n_q` for a prelevel/`l1` item, and it falls further for later levels:
+progression is gated, so fewer participants reach `l2`–`l4`, and an item behind a
+session's level selection is seen by fewer still. Classical-test-theory guidance
+generally wants **100+ respondents per item (often 200+) for a stable difficulty
+estimate, and more again for discrimination** — the point-biserial has wide
+confidence intervals at small `n` and can swing on a handful of unusual response
+patterns. At `n_q ≈ 20–40` these indices are best read as a **screening signal**
+for items whose wording plainly needs another look, not as a psychometric
+validation of the instrument. Difficulty (a simple proportion) is the steadier of
+the two at this `n`; discrimination is the more fragile.
+
+No standard errors or confidence intervals are reported — at this sample size they
+would be false precision. The needs-review flag is a heuristic filter, not a
+hypothesis test. `n_q` is on every row and in `items.csv` so each figure can be
+weighted by how many participants it rests on; a discrimination computed from
+`n_q < 10` should carry almost no weight.
+
+*Within-level total.* Because the total score is within-level (see above),
+discrimination is only meaningful once enough participants have played that level,
+and cross-level ability comparison is deliberately not attempted here.
 
 ### Exports
 ```
