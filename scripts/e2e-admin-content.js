@@ -45,6 +45,11 @@ const createdQuestionIds = [];
 // tests, so it never mixes with any other data in the database.
 const records = { session: null, level: null, participantIds: [], attemptIds: [], questionIds: [] };
 
+// Participant-management fixture (SPEC 6): a scratch session, ten
+// generated codes with roster labels, and a scratch attempt so the "no
+// label reaches any export" check has real rows to scan.
+const people = { session: null, level: null, participantCodePrefix: "E2EPM", attemptIds: [], questionId: null, labels: [] };
+
 const request = async (method, path, body, { token } = {}) => {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -118,6 +123,13 @@ const teardown = async () => {
   if (records.questionIds.length) await Question.deleteMany({ _id: { $in: records.questionIds } });
   if (records.level) await Level.deleteOne({ _id: records.level._id });
   if (records.session) await Session.deleteOne({ _id: records.session._id });
+
+  if (people.attemptIds.length) await Response.deleteMany({ attemptId: { $in: people.attemptIds } });
+  if (people.attemptIds.length) await Attempt.deleteMany({ _id: { $in: people.attemptIds } });
+  await Participant.deleteMany({ code: new RegExp(`^${people.participantCodePrefix}-`) });
+  if (people.questionId) await Question.deleteOne({ _id: people.questionId });
+  if (people.level) await Level.deleteOne({ _id: people.level._id });
+  if (people.session) await Session.deleteOne({ _id: people.session._id });
 
   await disconnectDB();
 };
@@ -381,6 +393,10 @@ const adminRouteMatrix = () => [
   { label: "POST   /admin/levels/:id/lock", method: "POST", path: `/admin/levels/${BOGUS_ID()}/lock`, body: {}, superAdminOnly: true },
   { label: "POST   /admin/levels/:id/unlock", method: "POST", path: `/admin/levels/${BOGUS_ID()}/unlock`, body: {}, superAdminOnly: true },
   { label: "POST   /admin/participants/generate", method: "POST", path: "/admin/participants/generate", body: { arm: "NOT_AN_ARM" } },
+  { label: "GET    /admin/participants", method: "GET", path: "/admin/participants" },
+  { label: "GET    /admin/participants/slips", method: "GET", path: "/admin/participants/slips" },
+  { label: "POST   /admin/participants/:id/reset-pin", method: "POST", path: `/admin/participants/${BOGUS_ID()}/reset-pin`, body: {} },
+  { label: "PATCH  /admin/participants/:id", method: "PATCH", path: `/admin/participants/${BOGUS_ID()}`, body: {} },
   { label: "GET    /admin/sessions", method: "GET", path: "/admin/sessions" },
   { label: "GET    /admin/records/participants", method: "GET", path: "/admin/records/participants" },
   { label: "GET    /admin/records/items", method: "GET", path: "/admin/records/items" },
@@ -823,6 +839,179 @@ const testExportsAndHandCheck = async () => {
   log(`exports OK — four CSVs, exact documented headers, no PII columns, filename encodes the toggles; responses.csv hand-checked field-for-field against ${p1Docs.length} P1 Response documents`);
 };
 
+// --- Participant management (SPEC 6) -----------------------------------
+
+const playToken = async (code, pin) => {
+  const set = await request("POST", "/auth/play/set-pin", { code, pin });
+  if (set.status === 200) return set.body.token;
+  const login = await request("POST", "/auth/play/login", { code, pin });
+  assert.equal(login.status, 200, `play login for ${code}: ${JSON.stringify(login.body)}`);
+  return login.body.token;
+};
+
+const testParticipantManagement = async () => {
+  const superToken = await adminToken(superAdmin.email, superAdminPassword);
+  people.session = await Session.create({ mode: "open", capacity: 20, levelKeys: ["e2e-pm"], status: "draft" });
+  people.level = await Level.create({ key: `e2e-pm-${Date.now()}`, order: 997, title: "PM scratch", scene: "Bench", role: "Tester", objectives: ["pm obj"], passMark: 50, status: "published" });
+  people.questionId = (
+    await Question.create({
+      levelId: people.level._id,
+      levelKey: people.level.key,
+      sequence: 1,
+      type: "mcq",
+      title: "PM Q1",
+      objective: "pm obj",
+      prompt: "Pick A.",
+      options: [{ key: "A", text: "Right" }, { key: "B", text: "Wrong" }],
+      correct: "A",
+      feedback: { text: "A." },
+      points: 100,
+      status: "published",
+      version: 1
+    })
+  )._id;
+
+  people.labels = Array.from({ length: 10 }, (_, i) => `Roll ${21 + i}`);
+
+  // --- Bulk generation with a custom prefix + roster labels ----------
+  const gen = await request(
+    "POST",
+    "/admin/participants/generate",
+    { prefix: "e2epm", arm: "E", count: 10, sessionId: String(people.session._id), labels: people.labels },
+    { token: superToken }
+  );
+  assert.equal(gen.status, 201, JSON.stringify(gen.body));
+  assert.equal(gen.body.prefix, "E2EPM", "prefix is upper-cased");
+  assert.equal(gen.body.participants.length, 10);
+  for (const p of gen.body.participants) assert.match(p.code, /^E2EPM-E-\d{3}$/, `code shape: ${p.code}`);
+  const codes = gen.body.participants.map(p => p.code);
+
+  // Labels landed on the SESSION ROSTER, not the participant documents.
+  const freshSession = await Session.findById(people.session._id).lean();
+  const rosterLabels = freshSession.roster.map(r => r.label).filter(Boolean).sort();
+  assert.deepEqual(rosterLabels, [...people.labels].sort(), "every label is on the session roster");
+  const pDocs = await Participant.find({ code: { $in: codes } }).lean();
+  const pDocsJson = JSON.stringify(pDocs);
+  for (const label of people.labels) assert.ok(!pDocsJson.includes(label), `label "${label}" must NOT be on any participant document`);
+  assert.ok(pDocs.every(p => p.pinHash == null), "generated codes start with no PIN");
+
+  // Labels without a session have nowhere to live -> refused.
+  const noSession = await request("POST", "/admin/participants/generate", { prefix: "E2EPM", arm: "C", count: 1, labels: ["orphan"] }, { token: superToken });
+  assert.equal(noSession.status, 400, "roster labels without a session must be refused");
+  assert.equal(noSession.body.error.code, "LABELS_NEED_SESSION");
+
+  // --- List: filterable by session and arm ---------------------------
+  const list = await request("GET", `/admin/participants?sessionId=${people.session._id}`, undefined, { token: superToken });
+  assert.equal(list.status, 200, JSON.stringify(list.body));
+  assert.equal(list.body.participants.length, 10);
+  const byCode = new Map(list.body.participants.map(r => [r.code, r]));
+  const first = byCode.get(codes[0]);
+  assert.equal(first.pinSet, false);
+  assert.equal(first.state, "no pin yet");
+  assert.equal(first.excluded, false);
+  assert.ok(people.labels.includes(first.sessionLabel), "the list row carries the roster label from the session, looked up separately");
+
+  const armFiltered = await request("GET", `/admin/participants?sessionId=${people.session._id}&arm=C`, undefined, { token: superToken });
+  assert.equal(armFiltered.body.participants.length, 0, "arm=C filter excludes the arm-E scratch codes");
+
+  // --- Reset PIN: clears the hash and severs the live session -------
+  const target = byCode.get(codes[1]);
+  const oldToken = await playToken(codes[1], "1111");
+  assert.equal((await request("GET", "/play/levels", undefined, { token: oldToken })).status, 200, "the freshly set PIN signs in");
+
+  const reset = await request("POST", `/admin/participants/${target.participantId}/reset-pin`, { reason: "e2e reset" }, { token: superToken });
+  assert.equal(reset.status, 200, JSON.stringify(reset.body));
+  assert.equal(reset.body.participant.pinSet, false, "reset clears the PIN hash");
+  assert.equal((await request("GET", "/play/levels", undefined, { token: oldToken })).status, 401, "reset also severs the old device's session");
+
+  const newToken = await playToken(codes[1], "2222"); // set-pin works again because the hash is gone
+  assert.equal((await request("GET", "/play/levels", undefined, { token: newToken })).status, 200, "a NEW PIN can be set and used after a reset");
+
+  assert.ok(await AuditLog.findOne({ action: "participant_pin_reset", "target.id": target.participantId }), "reset-pin writes an audit row");
+
+  // --- Exclude with a reason, admin note, then un-exclude ----------
+  const exTarget = byCode.get(codes[2]);
+  const exToken = await playToken(codes[2], "3333");
+  assert.equal((await request("GET", "/play/levels", undefined, { token: exToken })).status, 200);
+
+  const missingReason = await request("PATCH", `/admin/participants/${exTarget.participantId}`, { excluded: true }, { token: superToken });
+  assert.equal(missingReason.status, 400, "excluding needs a reason");
+  assert.equal(missingReason.body.error.code, "REASON_REQUIRED");
+
+  const excluded = await request("PATCH", `/admin/participants/${exTarget.participantId}`, { excluded: true, excludeReason: "code sharing", adminNote: "seat 4, arrived late" }, { token: superToken });
+  assert.equal(excluded.status, 200, JSON.stringify(excluded.body));
+  assert.equal(excluded.body.participant.excluded, true);
+  assert.equal(excluded.body.participant.excludeReason, "code sharing");
+  assert.equal(excluded.body.participant.adminNote, "seat 4, arrived late");
+  assert.equal(excluded.body.participant.state, "excluded");
+  assert.equal((await request("GET", "/play/levels", undefined, { token: exToken })).status, 401, "excluding a participant signs them out");
+
+  const unExcluded = await request("PATCH", `/admin/participants/${exTarget.participantId}`, { excluded: false }, { token: superToken });
+  assert.equal(unExcluded.body.participant.excluded, false);
+  assert.equal(unExcluded.body.participant.excludeReason, null, "un-excluding clears the reason (history is in the audit row)");
+  assert.equal(unExcluded.body.participant.adminNote, "seat 4, arrived late", "the admin note is untouched by an exclude change");
+  assert.ok(await AuditLog.findOne({ action: "participant_updated", "target.id": exTarget.participantId }), "PATCH writes an audit row");
+
+  // --- Slips: code + arm only, plus the PIN instructions ----------
+  const slips = await request("GET", `/admin/participants/slips?sessionId=${people.session._id}`, undefined, { token: superToken });
+  assert.equal(slips.status, 200, JSON.stringify(slips.body));
+  assert.equal(slips.body.slips.length, 10);
+  for (const s of slips.body.slips) assert.deepEqual(Object.keys(s).sort(), ["arm", "code"], "a slip carries ONLY code and arm");
+  assert.ok(Array.isArray(slips.body.pinInstructions) && slips.body.pinInstructions.every(x => typeof x === "string"));
+  const slipsJson = JSON.stringify(slips.body);
+  for (const label of people.labels) assert.ok(!slipsJson.includes(label), `no roster label reaches the slips payload ("${label}")`);
+
+  // --- The SPEC 6.2 guarantee: no roster label in ANY export -------
+  // Give a labelled participant a real attempt so the export rows aren't empty.
+  const attemptOwner = pDocs.find(p => p.code === codes[0]);
+  const att = await Attempt.create({
+    participantId: attemptOwner._id,
+    sessionId: people.session._id,
+    levelId: people.level._id,
+    attemptNo: 1,
+    kind: "first",
+    isPractice: false,
+    questionIds: [people.questionId],
+    startedAt: new Date(),
+    submittedAt: new Date(),
+    activeMs: 4000,
+    hiddenMs: 0,
+    score: 100,
+    accuracy: 100,
+    passed: true,
+    starsAwarded: 3,
+    status: "submitted"
+  });
+  people.attemptIds.push(att._id);
+  await Response.create({
+    attemptId: att._id,
+    participantId: attemptOwner._id,
+    sessionId: people.session._id,
+    questionId: people.questionId,
+    questionVersion: 1,
+    levelId: people.level._id,
+    given: { selected: "A" },
+    isCorrect: true,
+    partialScore: 100,
+    shownAt: new Date(Date.now() - 4000),
+    answeredAt: new Date(),
+    hiddenMs: 0,
+    isRetry: false
+  });
+
+  for (const file of ["participants", "attempts", "responses", "items"]) {
+    for (const inc of ["", "&includeExcluded=true&includePractice=true"]) {
+      const res = await fetch(`${baseUrl}/admin/records/export?file=${file}&sessionId=${people.session._id}${inc}`, { headers: { Authorization: `Bearer ${superToken}` } });
+      const text = await res.text();
+      for (const label of people.labels) {
+        assert.ok(!text.includes(label), `roster label "${label}" leaked into ${file}.csv${inc ? " (with includes)" : ""}`);
+      }
+    }
+  }
+
+  log("participant management OK — prefixed bulk generation, labels on the session roster only, list filters, reset-pin severs the session, exclude/note with audit, slips carry code+arm only, and no roster label reaches any of the four exports");
+};
+
 const run = async () => {
   await setup();
   try {
@@ -837,6 +1026,7 @@ const run = async () => {
     await testArchivedCannotBeEdited();
     await testRecordsAndAnalytics();
     await testExportsAndHandCheck();
+    await testParticipantManagement();
     log("ALL CHECKS PASSED");
   } finally {
     await teardown();

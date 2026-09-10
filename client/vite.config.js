@@ -46,6 +46,8 @@ export default defineConfig({
             path === "/admin/signin" ||
             path === "/admin/new-question" ||
             path === "/admin/records" ||
+            path === "/admin/people" ||
+            path === "/admin/slips" ||
             /^\/admin\/edit-question\/[^/]+$/.test(path);
           if (isClientRoute) return path;
         }

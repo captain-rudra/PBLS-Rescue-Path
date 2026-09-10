@@ -444,9 +444,15 @@ export const RecordsPage = () => {
       <header className="sticky top-0 z-10 border-b border-[#3A4A63]/20 bg-[#FFF7ED]/95 px-4 py-3 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center justify-between">
           <div>
-            <Link to="/admin" className="text-[11px] underline">
-              ← Question bank
-            </Link>
+            <span className="text-[11px]">
+              <Link to="/admin" className="underline">
+                ← Question bank
+              </Link>
+              <span className="mx-1.5 text-slate-400">·</span>
+              <Link to="/admin/people" data-testid="nav-people" className="underline">
+                Participants
+              </Link>
+            </span>
             <h1 className="text-lg font-semibold" style={{ fontFamily: "Fredoka, sans-serif" }}>
               Records &amp; analytics
             </h1>

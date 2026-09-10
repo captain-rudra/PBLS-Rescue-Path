@@ -271,6 +271,9 @@ export const QuestionBank = () => {
             <p className="text-[11px] text-slate-500">{counts ? `${counts.total} question${counts.total === 1 ? "" : "s"} in scope` : "Loading…"}</p>
           </div>
           <div className="flex items-center gap-2">
+            <Link to="/admin/people" data-testid="nav-people" className="rounded-md border border-[#3A4A63]/40 px-3 py-1.5 text-[13px] font-semibold text-[#16243D] hover:bg-white">
+              Participants
+            </Link>
             <Link to="/admin/records" data-testid="nav-records" className="rounded-md border border-[#3A4A63]/40 px-3 py-1.5 text-[13px] font-semibold text-[#16243D] hover:bg-white">
               Records &amp; analytics
             </Link>

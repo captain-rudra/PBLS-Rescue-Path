@@ -12,6 +12,8 @@ import { AdminAuthGate } from "./admin/AdminAuthGate.jsx";
 import { QuestionBank } from "./admin/QuestionBank.jsx";
 import { QuestionBuilder } from "./admin/QuestionBuilder.jsx";
 import { RecordsPage } from "./admin/RecordsPage.jsx";
+import { PeoplePage } from "./admin/PeoplePage.jsx";
+import { SlipsPage } from "./admin/SlipsPage.jsx";
 import { ADMIN_SIGNED_OUT_EVENT } from "./lib/adminAuth.js";
 
 export const App = () => {
@@ -64,6 +66,13 @@ export const App = () => {
             /items, /export, /trail are API paths and proxy through. Only
             the bare path goes in vite.config.js's bypass list. */}
         <Route path="/admin/records" element={<RecordsPage />} />
+        {/* Participant management (SPEC 6). Named /admin/people and
+            /admin/slips deliberately — NOT under /admin/participants/*,
+            which is the API prefix for generate / list / slips / reset-pin
+            / PATCH. Same collision-avoidance as /admin/new-question above.
+            Both go in vite.config.js's bypass list. */}
+        <Route path="/admin/people" element={<PeoplePage />} />
+        <Route path="/admin/slips" element={<SlipsPage />} />
       </Route>
     </Routes>
   );

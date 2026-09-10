@@ -55,6 +55,29 @@ const scopeQuery = scope => {
 };
 
 export const getSessions = () => request("GET", "/sessions");
+
+// --- Participant management (SPEC 6) ---------------------------------
+const participantQuery = ({ sessionId, arm, ids } = {}) => {
+  const params = new URLSearchParams();
+  if (sessionId) params.set("sessionId", sessionId);
+  if (arm) params.set("arm", arm);
+  if (ids && ids.length) params.set("ids", Array.isArray(ids) ? ids.join(",") : ids);
+  const q = params.toString();
+  return q ? `?${q}` : "";
+};
+
+export const getParticipants = (filters = {}) => request("GET", `/participants${participantQuery(filters)}`);
+export const generateCodes = ({ arm, count, prefix, sessionId, labels }) =>
+  request("POST", "/participants/generate", {
+    arm,
+    count,
+    ...(prefix ? { prefix } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(labels ? { labels } : {})
+  });
+export const resetParticipantPin = (id, reason) => request("POST", `/participants/${id}/reset-pin`, { reason });
+export const updateParticipant = (id, patch) => request("PATCH", `/participants/${id}`, patch);
+export const getSlips = (filters = {}) => request("GET", `/participants/slips${participantQuery(filters)}`);
 export const getRecordsParticipants = (scope = {}) => request("GET", `/records/participants${scopeQuery(scope)}`);
 export const getItemAnalysis = (scope = {}) => request("GET", `/records/items${scopeQuery(scope)}`);
 export const getRecordsTrail = (participantId, levelKey) =>
