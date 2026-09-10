@@ -7,6 +7,7 @@
 // Usage: node scripts/e2e-admin-content.js  (or: npm run test:admin-content --workspace server)
 
 import assert from "node:assert/strict";
+import mongoose from "mongoose";
 import { connectDB, disconnectDB } from "../server/src/db.js";
 import { createApp } from "../server/src/app.js";
 import Level from "../server/src/models/Level.js";
@@ -30,6 +31,7 @@ let baseUrl;
 let scratchLevel;
 let superAdmin;
 let plainAdmin;
+let matrixParticipant;
 const superAdminPassword = "e2e-super-password-123";
 const plainAdminPassword = "e2e-plain-password-123";
 const createdQuestionIds = [];
@@ -99,6 +101,7 @@ const teardown = async () => {
     await Admin.deleteOne({ _id: superAdmin._id });
   }
   if (plainAdmin) await Admin.deleteOne({ _id: plainAdmin._id });
+  if (matrixParticipant) await Participant.deleteOne({ _id: matrixParticipant._id });
   await disconnectDB();
 };
 
@@ -332,44 +335,95 @@ const testLockForksOnEdit = async () => {
   log("locked-question edit correctly forked a new version, left the old one intact, and unlock swept the fork back to published");
 };
 
-const testSuperAdminOnlyGuards = async () => {
+// The full admin-route auth matrix. Every route under /admin is exercised
+// against all three token kinds — not a spot check. The DELETE route that
+// shipped without requireSuperAdmin was invisible until the suite caught
+// it; this is the shape of test that makes that class of bug loud.
+//
+// Each request is deliberately crafted to PASS the guards and then fail on
+// a domain check (a bogus id -> 404, a bad body -> 400), so nothing here
+// mutates real data — the point is only "which tokens does the guard let
+// through", never what the handler does afterwards.
+//
+// `superAdminOnly` reflects the guards actually mounted in the route
+// files, which in turn track CLAUDE.md's "Enforced in code" list: only
+// deleting a question and locking/unlocking a level are super_admin-only.
+// Reordering questions is NOT on that list, so a plain admin may do it —
+// if that ever changes, the route's guard and this flag change together,
+// and this test fails until they do.
+const BOGUS_ID = () => new mongoose.Types.ObjectId().toString();
+
+const adminRouteMatrix = () => [
+  { label: "GET    /admin/questions", method: "GET", path: "/admin/questions" },
+  { label: "GET    /admin/questions/:id", method: "GET", path: `/admin/questions/${BOGUS_ID()}` },
+  { label: "POST   /admin/questions", method: "POST", path: "/admin/questions", body: {} },
+  { label: "PATCH  /admin/questions/:id", method: "PATCH", path: `/admin/questions/${BOGUS_ID()}`, body: {} },
+  { label: "DELETE /admin/questions/:id", method: "DELETE", path: `/admin/questions/${BOGUS_ID()}`, superAdminOnly: true },
+  { label: "POST   /admin/questions/reorder", method: "POST", path: "/admin/questions/reorder", body: { levelKey: "no-such-level-e2e-matrix", orderedQuestionIds: [] } },
+  { label: "GET    /admin/levels", method: "GET", path: "/admin/levels" },
+  { label: "POST   /admin/levels/:id/lock", method: "POST", path: `/admin/levels/${BOGUS_ID()}/lock`, body: {}, superAdminOnly: true },
+  { label: "POST   /admin/levels/:id/unlock", method: "POST", path: `/admin/levels/${BOGUS_ID()}/unlock`, body: {}, superAdminOnly: true },
+  { label: "POST   /admin/participants/generate", method: "POST", path: "/admin/participants/generate", body: { arm: "NOT_AN_ARM" } },
+  { label: "GET    /admin/records/trail", method: "GET", path: `/admin/records/trail?participantId=${BOGUS_ID()}&levelKey=no-such-level-e2e-matrix` }
+];
+
+const testAdminRouteAuthMatrix = async () => {
+  matrixParticipant = await Participant.create({ code: `E2E-ADMIN-MATRIX-${Date.now()}`, arm: "E" });
+  const jti = newJti();
+  matrixParticipant.activeJti = jti;
+  await matrixParticipant.save();
+  const participantToken = signParticipantToken({ participantId: matrixParticipant._id, sessionId: null, jti });
   const plainToken = await adminToken(plainAdmin.email, plainAdminPassword);
-
-  const lockAsPlainAdmin = await request("POST", `/admin/levels/${scratchLevel._id}/lock`, {}, { token: plainToken });
-  assert.equal(lockAsPlainAdmin.status, 403, "a plain admin must not be able to lock a level");
-  assert.equal(lockAsPlainAdmin.body.error.code, "SUPER_ADMIN_REQUIRED");
-
-  const question = await createDraft("mcq", { title: "Delete-guard scratch" });
-  const deleteAsPlainAdmin = await request("DELETE", `/admin/questions/${question.questionId}`, undefined, { token: plainToken });
-  assert.equal(deleteAsPlainAdmin.status, 403, "a plain admin must not be able to delete (archive) a question");
-
   const superToken = await adminToken(superAdmin.email, superAdminPassword);
-  const deleteAsSuperAdmin = await request("DELETE", `/admin/questions/${question.questionId}`, undefined, { token: superToken });
-  assert.equal(deleteAsSuperAdmin.status, 200, JSON.stringify(deleteAsSuperAdmin.body));
-  assert.equal(deleteAsSuperAdmin.body.question.status, "archived");
 
-  const archiveAuditRow = await AuditLog.findOne({ action: "question_archived", "target.id": question.questionId });
-  assert.ok(archiveAuditRow, "archiving must write an auditlog row");
+  for (const route of adminRouteMatrix()) {
+    const { label, method, path, body, superAdminOnly } = route;
 
-  log("super_admin-only guards OK: lock and delete both refuse a plain admin, both succeed for a super_admin, both audited");
+    // 1. Participant token — rejected on AUDIENCE, before role or anything.
+    const asParticipant = await request(method, path, body, { token: participantToken });
+    assert.equal(asParticipant.status, 401, `${label}: a participant token must be rejected (401), got ${asParticipant.status}`);
+    assert.equal(asParticipant.body?.error?.code, "WRONG_AUDIENCE", `${label}: the participant rejection must be on audience, got ${asParticipant.body?.error?.code}`);
+
+    // 2. Plain admin token — 403 SUPER_ADMIN_REQUIRED where the route is
+    //    super_admin-only, otherwise it must clear every auth check and
+    //    only ever fail (if at all) on a domain error.
+    const asAdmin = await request(method, path, body, { token: plainToken });
+    if (superAdminOnly) {
+      assert.equal(asAdmin.status, 403, `${label}: a plain admin must be refused (403), got ${asAdmin.status}`);
+      assert.equal(asAdmin.body?.error?.code, "SUPER_ADMIN_REQUIRED", `${label}: the plain-admin refusal must be SUPER_ADMIN_REQUIRED, got ${asAdmin.body?.error?.code}`);
+    } else {
+      assert.notEqual(asAdmin.status, 401, `${label}: a plain admin must NOT be rejected on auth (401)`);
+      assert.notEqual(asAdmin.body?.error?.code, "WRONG_AUDIENCE", `${label}: a plain admin must clear the audience check`);
+      assert.notEqual(asAdmin.body?.error?.code, "SUPER_ADMIN_REQUIRED", `${label}: a plain admin must NOT hit a super_admin gate on this route`);
+    }
+
+    // 3. Super admin token — clears every auth check on every route.
+    const asSuperAdmin = await request(method, path, body, { token: superToken });
+    assert.notEqual(asSuperAdmin.status, 401, `${label}: a super_admin must clear the audience check`);
+    assert.notEqual(asSuperAdmin.body?.error?.code, "WRONG_AUDIENCE", `${label}: a super_admin must clear the audience check`);
+    assert.notEqual(asSuperAdmin.body?.error?.code, "SUPER_ADMIN_REQUIRED", `${label}: a super_admin must clear the role check`);
+
+    log(`  ${label}  —  participant 401 · ${superAdminOnly ? "plain admin 403" : "plain admin passes"} · super_admin passes`);
+  }
+
+  log("admin-route auth matrix OK — every route, all three token kinds");
 };
 
-const testAudienceGuard = async () => {
-  const participant = await Participant.create({ code: `E2E-ADMIN-CONTENT-${Date.now()}`, arm: "E" });
-  try {
-    const jti = newJti();
-    participant.activeJti = jti;
-    await participant.save();
-    const participantToken = signParticipantToken({ participantId: participant._id, sessionId: null, jti });
+// The domain half of the old spot check: a super_admin's delete really
+// archives and really audits (the matrix above only proves the guard let
+// the request through, on a bogus id).
+const testDeleteArchivesAndAudits = async () => {
+  const question = await createDraft("mcq", { title: "Delete-domain scratch" });
+  const superToken = await adminToken(superAdmin.email, superAdminPassword);
 
-    const listAsParticipant = await request("GET", "/admin/questions", undefined, { token: participantToken });
-    assert.equal(listAsParticipant.status, 401, "a participant token must never satisfy an admin route");
-    assert.equal(listAsParticipant.body.error.code, "WRONG_AUDIENCE");
+  const deleted = await request("DELETE", `/admin/questions/${question.questionId}`, undefined, { token: superToken });
+  assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
+  assert.equal(deleted.body.question.status, "archived");
 
-    log("audience guard OK: a participant token cannot reach /admin/questions");
-  } finally {
-    await Participant.deleteOne({ _id: participant._id });
-  }
+  const auditRow = await AuditLog.findOne({ action: "question_archived", "target.id": question.questionId });
+  assert.ok(auditRow, "archiving must write an auditlog row");
+
+  log("super_admin delete archives the question and writes an audit row OK");
 };
 
 const testArchivedCannotBeEdited = async () => {
@@ -393,8 +447,8 @@ const run = async () => {
     await testFallbackTextRequiredWithMedia();
     await testReorder();
     await testLockForksOnEdit();
-    await testSuperAdminOnlyGuards();
-    await testAudienceGuard();
+    await testAdminRouteAuthMatrix();
+    await testDeleteArchivesAndAudits();
     await testArchivedCannotBeEdited();
     log("ALL CHECKS PASSED");
   } finally {

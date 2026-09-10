@@ -442,6 +442,49 @@ Filterable list by level, type and status. Drag rows to reorder within a level �
 **reordering rewrites `sequence` for the whole level in one transaction** so two items
 can never share a position.
 
+**Implementation note — "one transaction" is a two-phase write in this build.**
+Multi-document transactions in MongoDB require a replica set. The development
+database is a standalone `mongod`, which has no transaction support at all, so
+`POST /admin/questions/reorder` does two sequential `bulkWrite`s instead: pass one
+moves every affected row to a temporary out-of-range sequence (`1_000_000 + i`),
+pass two sets every row to its final sequence (`i + 1`). The temporary values
+cannot collide with each other or with any real sequence, and the final values are
+a validated permutation, so neither pass can ever trip the partial unique index on
+`(levelKey, sequence)`.
+
+The compromise is the gap between the two passes: a read landing there sees
+out-of-range sequence numbers, and a crash there leaves them persisted — harmless
+in that nothing ever *shares* a position, and re-running the reorder repairs it,
+but not the isolation a real transaction gives.
+
+Production runs on MongoDB Atlas, which **is** a replica set. The transactional
+version keeps the same two-phase structure — a unique index is still enforced per
+write even inside a transaction, so a non-monotonic permutation (swapping positions
+3 and 5, say) still needs the offset pass — but wraps it so the intermediate state
+is never visible to another reader and any failure rolls the whole batch back:
+
+```js
+const session = await mongoose.startSession();
+try {
+  await session.withTransaction(async () => {
+    const offset = providedIds.map((id, i) => ({
+      updateOne: { filter: { _id: id }, update: { $set: { sequence: 1_000_000 + i } } }
+    }));
+    const final = providedIds.map((id, i) => ({
+      updateOne: { filter: { _id: id }, update: { $set: { sequence: i + 1 } } }
+    }));
+    await Question.bulkWrite(offset, { session });
+    await Question.bulkWrite(final, { session });
+  });
+} finally {
+  await session.endSession();
+}
+```
+
+Swap to this once the deployment target is fixed. This is a deliberate
+dev-environment compromise, **not** a conclusion that a transaction was never
+possible here.
+
 A background job issues a HEAD request against every media url once a day and marks
 anything unreachable. The point is to find a dead link on a Tuesday afternoon rather
 than in front of forty students.

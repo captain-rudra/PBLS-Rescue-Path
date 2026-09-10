@@ -296,16 +296,20 @@ router.delete("/:id", requireSuperAdmin, async (request, response) => {
 // SPEC 4.2: "reordering rewrites sequence for the whole level in one
 // transaction so two items can never share a position." The local MongoDB
 // this runs against is a standalone instance, not a replica set — it does
-// not support multi-document ACID transactions at all (ordinary studies
-// run this on a single server, not a cluster). A two-phase bulkWrite gets
-// the property that actually matters — no lasting duplicate position, and
-// no window where two DIFFERENT final positions collide — without one:
-// phase 1 moves every affected row to a temporary sequence far outside any
-// real range, phase 2 sets every row to its real final sequence. Because
-// the temporary values in phase 1 can never collide with each other or
-// with the real ones, and the final values in phase 2 are a permutation
-// (already validated below), neither phase can ever hit the partial
-// unique index.
+// not support multi-document ACID transactions at all. A two-phase
+// bulkWrite gets the property that actually matters — no lasting duplicate
+// position, and no window where two DIFFERENT final positions collide —
+// without one: phase 1 moves every affected row to a temporary sequence
+// far outside any real range, phase 2 sets every row to its real final
+// sequence. Because the temporary values in phase 1 can never collide with
+// each other or with the real ones, and the final values in phase 2 are a
+// permutation (already validated below), neither phase can ever hit the
+// partial unique index.
+//
+// This is a documented dev-environment compromise, NOT a claim that a
+// transaction was impossible. Production is MongoDB Atlas (a replica set);
+// SPEC 4.2 spells out the transactional version to swap in there — it
+// keeps this same two-phase structure but wraps it in `withTransaction`.
 const REORDER_OFFSET = 1_000_000;
 
 router.post("/reorder", async (request, response) => {
