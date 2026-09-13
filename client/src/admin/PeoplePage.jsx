@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { getMe, getSessions, getParticipants, generateCodes, resetParticipantPin, updateParticipant } from "../lib/adminApi.js";
+import { getMe, getSessions, getParticipants, generateCodes, resetParticipantPin, updateParticipant, deleteParticipant } from "../lib/adminApi.js";
 
 // Backend stateOf() values (server/src/routes/admin/participants.js).
 const STATE_STYLE = {
@@ -236,7 +236,7 @@ const NoteCell = ({ participant, onSave }) => {
   );
 };
 
-const ParticipantRow = ({ participant, onPatch, onResetPin }) => {
+const ParticipantRow = ({ participant, canDelete, onPatch, onResetPin, onDelete }) => {
   const [busy, setBusy] = useState(false);
 
   const run = async fn => {
@@ -262,6 +262,22 @@ const ParticipantRow = ({ participant, onPatch, onResetPin }) => {
   const resetPin = () => {
     if (!window.confirm(`Reset the PIN for ${participant.code}? They will choose a new one on their next sign-in, and any device currently signed in as this code is signed out.`)) return;
     return run(() => onResetPin(participant));
+  };
+
+  // Soft delete only (CLAUDE.md rule 5 — nothing is hard deleted). Sets
+  // deletedAt, which is already baked into every list/records/export/
+  // sign-in filter, so the code vanishes from the console and can no
+  // longer authenticate. The document and any attempts/responses it owns
+  // stay in the database, untouched, for audit. Typing the code back is a
+  // second confirmation step on top of the reason, since there's no undo
+  // button in this UI even though the row itself is recoverable in Mongo.
+  const deleteRow = () => {
+    const reason = window.prompt(`Delete ${participant.code}? This removes it from every list, filter and export (the underlying record is kept, never hard-deleted). Reason (required — it goes in the audit log):`);
+    if (reason == null) return;
+    if (!reason.trim()) return window.alert("A reason is required to delete a participant.");
+    const typed = window.prompt(`Type the code "${participant.code}" to confirm.`);
+    if (typed !== participant.code) return window.alert("Code didn't match — nothing was deleted.");
+    return run(() => onDelete(participant, reason.trim()));
   };
 
   return (
@@ -315,10 +331,22 @@ const ParticipantRow = ({ participant, onPatch, onResetPin }) => {
           data-testid={`toggle-excluded-${participant.code}`}
           disabled={busy}
           onClick={toggleExcluded}
-          className={`text-[11px] font-semibold underline ${participant.excluded ? "text-[#34D399]" : "text-[#FF6B5B]"} disabled:opacity-50`}
+          className={`mr-2 text-[11px] font-semibold underline ${participant.excluded ? "text-[#34D399]" : "text-[#FF6B5B]"} disabled:opacity-50`}
         >
           {participant.excluded ? "Include" : "Exclude"}
         </button>
+        {canDelete && (
+          <button
+            type="button"
+            data-testid={`delete-${participant.code}`}
+            disabled={busy}
+            onClick={deleteRow}
+            title="Soft delete — removes it from every list and export, keeps the record for audit (super_admin only)"
+            className="text-[11px] font-semibold text-[#FF6B5B] underline disabled:opacity-50"
+          >
+            Delete
+          </button>
+        )}
       </td>
     </tr>
   );
@@ -330,6 +358,8 @@ export const PeoplePage = () => {
   const [participants, setParticipants] = useState(null);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [admin, setAdmin] = useState(null);
+  const isSuperAdmin = admin?.role === "super_admin";
 
   const load = useCallback(() => {
     setError(null);
@@ -342,7 +372,9 @@ export const PeoplePage = () => {
     getSessions()
       .then(res => setSessions(res.sessions))
       .catch(() => setSessions([]));
-    getMe().catch(() => {});
+    getMe()
+      .then(res => setAdmin(res.admin))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -380,6 +412,16 @@ export const PeoplePage = () => {
       const res = await resetParticipantPin(participant.participantId);
       setParticipants(prev => mergeRow(prev, participant.participantId, res.participant));
       setNotice(`PIN reset for ${participant.code} — they set a new one on next sign-in.`);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleDelete = async (participant, reason) => {
+    try {
+      await deleteParticipant(participant.participantId, reason);
+      setParticipants(prev => prev.filter(p => p.participantId !== participant.participantId));
+      setNotice(`Deleted ${participant.code}. The record is kept for audit — nothing is hard deleted — but it's out of every list and export now.`);
     } catch (e) {
       setError(e.message);
     }
@@ -457,7 +499,7 @@ export const PeoplePage = () => {
               </thead>
               <tbody>
                 {participants.map(p => (
-                  <ParticipantRow key={p.participantId} participant={p} onPatch={handlePatch} onResetPin={handleResetPin} />
+                  <ParticipantRow key={p.participantId} participant={p} canDelete={isSuperAdmin} onPatch={handlePatch} onResetPin={handleResetPin} onDelete={handleDelete} />
                 ))}
               </tbody>
             </table>

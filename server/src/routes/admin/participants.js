@@ -4,6 +4,7 @@ import Participant from "../../models/Participant.js";
 import Session from "../../models/Session.js";
 import { sendError } from "../../lib/httpError.js";
 import { writeAuditLog } from "../../services/audit.js";
+import { requireSuperAdmin } from "../../middleware/requireSuperAdmin.js";
 
 const router = Router();
 
@@ -276,6 +277,42 @@ router.patch("/:id", async (request, response) => {
   });
 
   response.json({ participant: rowOf(participant.toObject()) });
+});
+
+// --- Delete (SPEC 6, CLAUDE.md rule 5) --------------------------------
+// A SOFT delete, like every other delete in this codebase: sets
+// `deletedAt`, never removes the document. `deletedAt: null` is already
+// baked into the participant filter on every list/records/export/sign-in
+// query, so a deleted code disappears from the console and can no longer
+// authenticate — but its attempts and responses, if any exist, are left
+// exactly where they are, still traceable back to this document. This is
+// for retiring a code that was generated wrong or is a test artifact, not
+// for withdrawing a real participant from the study — that's what
+// `excluded` is for, since it keeps the row visible with a reason instead
+// of hiding it. super_admin-only, like every other irreversible-sounding
+// action in this file (archiving a question, locking a level).
+router.delete("/:id", requireSuperAdmin, async (request, response) => {
+  const participant = await loadParticipantOr404(response, request.params.id);
+  if (!participant) return;
+  const reason = (request.body?.reason || "").trim();
+  if (!reason) return sendError(response, 400, "REASON_REQUIRED", "a reason is required to delete a participant");
+
+  const before = rowOf(participant.toObject());
+  participant.deletedAt = new Date();
+  participant.activeJti = null; // the code can no longer authenticate once deleted, but this makes any live device drop immediately too
+  await participant.save();
+
+  await writeAuditLog({
+    actorId: request.admin._id,
+    actorRole: request.admin.role,
+    action: "participant_deleted",
+    target: { kind: "participant", id: participant._id },
+    before,
+    after: rowOf(participant.toObject()),
+    reason
+  });
+
+  response.json({ deleted: true, participantId: String(participant._id) });
 });
 
 export default router;

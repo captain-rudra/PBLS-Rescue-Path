@@ -78,6 +78,8 @@ export const generateCodes = ({ arm, count, prefix, sessionId, labels }) =>
 export const resetParticipantPin = (id, reason) => request("POST", `/participants/${id}/reset-pin`, { reason });
 export const updateParticipant = (id, patch) => request("PATCH", `/participants/${id}`, patch);
 export const getSlips = (filters = {}) => request("GET", `/participants/slips${participantQuery(filters)}`);
+// Soft delete (sets deletedAt — CLAUDE.md rule 5, never a real removal).
+export const deleteParticipant = (id, reason) => request("DELETE", `/participants/${id}`, { reason });
 export const getRecordsParticipants = (scope = {}) => request("GET", `/records/participants${scopeQuery(scope)}`);
 export const getItemAnalysis = (scope = {}) => request("GET", `/records/items${scopeQuery(scope)}`);
 export const getRecordsTrail = (participantId, levelKey) =>
