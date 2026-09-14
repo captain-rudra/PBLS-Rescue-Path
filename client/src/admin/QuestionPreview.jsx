@@ -14,6 +14,7 @@ import { QUESTION_COMPONENTS } from "../question-engine/questions/index.js";
 // server's response.feedback (see server/src/routes/play/responses.js),
 // so the same correct/wrong rendering the live game uses lights up here.
 const scoreLocally = (form, given) => {
+  if (form.type === "interlude") return { isCorrect: true };
   if (form.type === "drag_drop") {
     const correctPlacements = Object.fromEntries(form.items.map(item => [item.id, item.bucket]));
     const isCorrect = form.items.every(item => given.placements[item.id] === item.bucket);

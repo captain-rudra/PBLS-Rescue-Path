@@ -43,6 +43,10 @@ export const toPlayerQuestion = question => {
 
 /** Validates the shape of `given` against the question type before scoring. */
 export const validateGiven = (question, given) => {
+  // interlude has nothing to choose — "watched both clips" is enforced
+  // client-side only (SPEC 3.8), same trust model as gateOnFirstPlay and
+  // mediaReplays elsewhere in this file. Any given (even {}) is accepted.
+  if (question.type === "interlude") return true;
   if (OPTION_BASED_TYPES.has(question.type)) {
     return typeof given?.selected === "string" && given.selected.length > 0;
   }
@@ -70,6 +74,13 @@ export const validateGiven = (question, given) => {
 
 /** Pure scoring function: (question, given) -> { isCorrect, partialScore }. */
 export const scoreResponse = (question, given) => {
+  // Always "correct", zero points — interlude is unscored by design
+  // (SPEC 3.8). Excluded from accuracy/streak/objectives in
+  // aggregateAttempt/summarizeObjectives below, so this isCorrect is never
+  // read as a real measurement — it exists only so the response row has a
+  // defined shape like every other type's.
+  if (question.type === "interlude") return { isCorrect: true, partialScore: 0 };
+
   if (OPTION_BASED_TYPES.has(question.type)) {
     const isCorrect = given.selected === question.correct;
     return { isCorrect, partialScore: isCorrect ? question.points : 0 };
@@ -165,6 +176,12 @@ export const remediationRoundFor = (attempt, allAttemptsForLevel) => {
 export const aggregateAttempt = ({ level, questions, responses }) => {
   const ordered = [...responses].sort((a, b) => new Date(a.answeredAt) - new Date(b.answeredAt));
   const questionById = new Map(questions.map(q => [String(q._id), q]));
+  // interlude is unscored (SPEC 3.8) — always isCorrect:true with 0
+  // points, which would otherwise silently inflate accuracy (it never
+  // lands as a wrong answer) and the streak bonus (a free "correct" between
+  // two real ones). Excluded from every figure below except timing —
+  // watching it is genuine time-on-task and is kept.
+  const isScored = response => questionById.get(String(response.questionId))?.type !== "interlude";
 
   let totalPoints = 0;
   let correctCount = 0;
@@ -175,10 +192,12 @@ export const aggregateAttempt = ({ level, questions, responses }) => {
 
   for (const response of ordered) {
     totalPoints += response.partialScore;
-    if (response.isCorrect) {
-      correctCount += 1;
-    } else {
-      missedQuestionIds.push(String(response.questionId));
+    if (isScored(response)) {
+      if (response.isCorrect) {
+        correctCount += 1;
+      } else {
+        missedQuestionIds.push(String(response.questionId));
+      }
     }
     const question = questionById.get(String(response.questionId));
     cumulativeDamage += responseDamage(question?.points, response.partialScore);
@@ -187,9 +206,9 @@ export const aggregateAttempt = ({ level, questions, responses }) => {
     hiddenMs += response.hiddenMs || 0;
   }
 
-  const totalQuestions = questions.length;
+  const totalQuestions = questions.filter(q => q.type !== "interlude").length;
   const accuracy = totalQuestions ? Math.round((correctCount / totalQuestions) * 100) : 0;
-  const streakBonus = computeStreakBonus(ordered.map(r => r.isCorrect));
+  const streakBonus = computeStreakBonus(ordered.filter(isScored).map(r => r.isCorrect));
   const score = totalPoints + streakBonus;
   const starsAwarded = computeStars(accuracy);
   const vitalsEnd = vitalsFromDamage(cumulativeDamage);
@@ -207,7 +226,10 @@ export const aggregateAttempt = ({ level, questions, responses }) => {
 export const summarizeObjectives = ({ level, questions, responses }) => {
   const responseByQuestionId = new Map(responses.map(r => [String(r.questionId), r]));
   return level.objectives.map(objective => {
-    const relevant = questions.filter(q => q.objective === objective);
+    // interlude carries an objective tag (SPEC 4.4 check 8 still applies to
+    // it) but is not itself an assessment of that objective (SPEC 3.8) —
+    // excluded here so its always-true response can't trivially satisfy one.
+    const relevant = questions.filter(q => q.objective === objective && q.type !== "interlude");
     if (relevant.length === 0) return { objective, applicable: false, met: false };
     const met = relevant.every(q => responseByQuestionId.get(String(q._id))?.isCorrect === true);
     return { objective, applicable: true, met };

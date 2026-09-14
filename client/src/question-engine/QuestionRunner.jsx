@@ -42,10 +42,20 @@ export const QuestionRunner = ({ attemptId, question, onAnswered, onContinue, is
         mediaReplays: meta.mediaReplays || 0
       });
 
+      onAnswered({ isCorrect: response.isCorrect, partialScore: response.partialScore, question });
+
+      // interlude has no feedback stage to show (SPEC 3.8) — its own
+      // "Done" button already gated on watching both clips, so committing
+      // it just advances straight on instead of opening a FeedbackCard
+      // with nothing to give feedback ON.
+      if (question.type === "interlude") {
+        onContinue();
+        return;
+      }
+
       const nextResult = { given, isCorrect: response.isCorrect, partialScore: response.partialScore, ...response.feedback };
       setResult(nextResult);
       setPhase("feedback");
-      onAnswered({ isCorrect: response.isCorrect, partialScore: response.partialScore, question });
     } catch (error) {
       setSubmitError(error.message);
       setPhase("answering");

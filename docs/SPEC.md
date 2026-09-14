@@ -326,7 +326,7 @@ default** with a visible toggle — a learner may be in a shared study room.
 
 ## 3. Question types
 
-Seven shapes, one collection, discriminated by `type`. Only fields relevant to the
+Eight shapes, one collection, discriminated by `type`. Only fields relevant to the
 type are validated and rendered.
 
 | Type | Screen treatment |
@@ -338,6 +338,7 @@ type are validated and rendered.
 | `sequence` | Draggable ordered rows |
 | `split_screen` | Two independent players, both mandatory before answering |
 | `hotspot_video` | Single player with a timed hotspot overlay, plus a fallback option list |
+| `interlude` | Two independent players plus an optional photo and text, no options, unscored |
 
 ### 3.1 Gating
 
@@ -431,6 +432,27 @@ per-attempt figures back the item-analysis and "attempts per level" measures (§
 only the *displayed headline* (result card, dashboard, records) is pinned to
 `attemptNo: 1`.
 
+### 3.8 Interlude
+
+A mandatory-viewing bridge — e.g. a short narrative cutscene between two levels — not
+an assessment item. It carries `media.videoUrl`/`videoUrlB` (two independent players,
+same as split screen), an optional `media.imageUrl`, and `prompt`/`scenario` for text.
+No `options`, no `correct`.
+
+Both clips must be watched through once before **Done** enables — same
+mandatory-viewing principle as split screen (3.4), but the payoff on completion is
+simply advancing to the next question, with no answer to lock in and no feedback
+stage. Replays after the first watch-through are unlimited, same as everywhere else
+media is gated.
+
+It is placed in the question sequence exactly like any other item — e.g. as sequence 1
+of the level it introduces, so it is the first thing a participant sees on starting
+that level's first attempt — and reordered the same way (4.2). It still produces a
+real, timed, append-only Response row (an interlude is watched, not skipped, and that
+fact is worth being able to prove), but that row is excluded from accuracy, the streak
+bonus, objective rollups (3.7, 2.6) and item analysis (§11) — it has no right or wrong
+answer for any of those to mean anything against. `points` is always 0.
+
 ---
 
 ## 4. Admin console
@@ -520,9 +542,11 @@ Only super_admin moves a level to locked. Locking sweeps every question in scope
 3. Every drag item names a bucket that exists
 4. `correctOrder` covers every sequence item exactly once
 5. Each hotspot window falls inside the clip duration
-6. `feedback.text` is present
+6. `feedback.text` is present — except `interlude` (3.8), which has no feedback
+   stage and always carries a fixed placeholder there instead
 7. `fallbackText` is present whenever media is attached
 8. An `objective` is selected from the parent level's list
+9. An `interlude` has both of its two mandatory video URLs
 
 Rule 8 is what makes objective-level reporting possible on both the result card and
 the analytics screen.
@@ -851,7 +875,7 @@ GET  /auth/me                   resolves whichever token was presented
 ### Content — admin
 ```
 GET    /admin/questions              filter by level, type, status
-POST   /admin/questions              create, runs the eight checks
+POST   /admin/questions              create, runs the nine checks
 PATCH  /admin/questions/:id          edit, or fork a version if locked
 DELETE /admin/questions/:id          soft delete, super_admin only
 POST   /admin/questions/reorder      rewrites sequence atomically

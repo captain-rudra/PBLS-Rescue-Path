@@ -337,7 +337,12 @@ router.get("/:id/review", async (request, response) => {
   ]);
   const responseByQuestionId = new Map(responses.map(response_ => [String(response_.questionId), response_]));
 
-  const items = questions.map(question => {
+  // interlude has no answer to review — no options, no correct answer, no
+  // feedback stage (SPEC 3.8) — so it's left out of the answer-by-answer
+  // walkback entirely rather than rendered with blank given/correct.
+  const items = questions
+    .filter(question => question.type !== "interlude")
+    .map(question => {
     const answered = responseByQuestionId.get(String(question._id)) || null;
     return {
       questionId: String(question._id),

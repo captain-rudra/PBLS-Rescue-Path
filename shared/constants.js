@@ -5,7 +5,8 @@ export const QUESTION_TYPES = Object.freeze([
   "drag_drop",
   "sequence",
   "split_screen",
-  "hotspot_video"
+  "hotspot_video",
+  "interlude"
 ]);
 
 export const LEVEL_KEYS = Object.freeze(["prelevel", "l1", "l2", "l3", "l4"]);

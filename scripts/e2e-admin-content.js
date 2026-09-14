@@ -19,6 +19,7 @@ import Attempt from "../server/src/models/Attempt.js";
 import Response from "../server/src/models/Response.js";
 import AuditLog from "../server/src/models/AuditLog.js";
 import { hashSecret, signParticipantToken, newJti } from "../server/src/services/auth.js";
+import { aggregateAttempt } from "../server/src/services/scoring.js";
 import { ROLES } from "../shared/constants.js";
 
 const log = (...args) => console.log("[e2e-admin-content]", ...args);
@@ -215,6 +216,16 @@ const DRAFTS_BY_TYPE = {
     hotspots: [{ tStart: 2, tEnd: 5, x: 0.5, y: 0.5, r: 0.1, isError: true, label: "depth" }],
     fallbackText: "The compressions are too shallow.",
     feedback: { text: "Depth was the error." }
+  },
+  interlude: {
+    type: "interlude",
+    title: "Scratch interlude",
+    objective: OBJECTIVE_A,
+    prompt: "Watch what happens next.",
+    points: 999, // deliberately non-zero — sanitizeQuestionForType must force this to 0 regardless
+    media: { videoUrl: "https://example.test/i-a.mp4", videoUrlB: "https://example.test/i-b.mp4" },
+    fallbackText: "Two paramedics arrive and take over care.",
+    feedback: { text: "" } // deliberately empty — interlude gets a fixed placeholder instead, never blocks publish
   }
 };
 
@@ -233,7 +244,7 @@ const testCreateAllSevenTypesAsDrafts = async () => {
     assert.equal(question.type, type);
     assert.equal(question.version, 1);
   }
-  log("all seven question types created as drafts OK");
+  log(`all ${Object.keys(DRAFTS_BY_TYPE).length} question types created as drafts OK`);
 };
 
 const testPublishValid = async () => {
@@ -277,6 +288,55 @@ const testFallbackTextRequiredWithMedia = async () => {
   const failures = JSON.parse(body.error.message);
   assert.ok(failures.some(f => /fallbackText/i.test(f)), "must name the missing-fallbackText failure when media is attached");
   log("fallbackText-required-with-media check OK");
+};
+
+const testInterludeIsUnscored = async () => {
+  // Blank feedback.text and an over-large points value — both must be
+  // silently corrected by the sanitizer, never block or need fixing by
+  // the admin (SPEC 3.8 / 4.4 checks 6 and 9).
+  const question = await createDraft("interlude", { title: "Interlude publish" });
+  const publish = await request("PATCH", `/admin/questions/${question.questionId}`, { ...question, status: "published" });
+  assert.equal(publish.status, 200, JSON.stringify(publish.body));
+  assert.equal(publish.body.question.points, 0, "interlude points must be forced to 0 regardless of what was submitted");
+  assert.match(publish.body.question.feedback?.text || "", /interlude/i, "a blank feedback.text must get the fixed placeholder, not block publish");
+
+  // Missing one of the two mandatory clips must fail check 9, by name.
+  const oneClip = await createDraft("interlude", { title: "Interlude missing a clip", media: { videoUrl: "https://example.test/only-one.mp4" } });
+  const rejected = await request("PATCH", `/admin/questions/${oneClip.questionId}`, { ...oneClip, status: "published" });
+  assert.equal(rejected.status, 422, JSON.stringify(rejected.body));
+  const failures = JSON.parse(rejected.body.error.message);
+  assert.ok(failures.some(f => /both video urls/i.test(f)), "must name the missing-second-clip failure for an interlude");
+
+  log("interlude OK: unscored (points forced to 0), no feedback.text required, both clips required to publish");
+};
+
+// aggregateAttempt is a pure function — no DB, no HTTP. Fixture: an
+// interlude first, then one correct mcq, then one wrong mcq, ordered by
+// answeredAt exactly as scored. If the interlude were (wrongly) counted
+// as a third, always-correct question, accuracy would read 66.67%
+// instead of the true 50% (1 of the 2 REAL questions), and its
+// always-true response would seed a streak of 2 by question 2 — an
+// undeserved +10 streak bonus neither real answer earned on its own.
+const testInterludeExcludedFromScoring = () => {
+  const questions = [
+    { _id: "q-interlude", type: "interlude", points: 0 },
+    { _id: "q1", type: "mcq", points: 100 },
+    { _id: "q2", type: "mcq", points: 100 }
+  ];
+  const base = Date.parse("2026-01-01T00:00:00.000Z");
+  const responses = [
+    { questionId: "q-interlude", isCorrect: true, partialScore: 0, shownAt: new Date(base), answeredAt: new Date(base + 1000), hiddenMs: 0 },
+    { questionId: "q1", isCorrect: true, partialScore: 100, shownAt: new Date(base + 2000), answeredAt: new Date(base + 5000), hiddenMs: 0 },
+    { questionId: "q2", isCorrect: false, partialScore: 0, shownAt: new Date(base + 6000), answeredAt: new Date(base + 9000), hiddenMs: 0 }
+  ];
+
+  const result = aggregateAttempt({ level: { objectives: [] }, questions, responses });
+  assert.equal(result.accuracy, 50, `interlude must not count toward accuracy — expected 50% (1 of 2 real questions), got ${result.accuracy}%`);
+  assert.equal(result.streakBonus, 0, "the interlude's always-true response must not seed a streak toward the +10 bonus");
+  assert.deepEqual(result.missedQuestionIds, ["q2"], "the interlude must never appear as a missed item, and the real wrong answer still must");
+  assert.equal(result.score, 100, "score is the one real correct mcq's 100 points plus a (correctly zero) streak bonus");
+
+  log("interlude excluded from scoring OK: accuracy/streak/missed-items all computed from the 2 real questions only, not 3");
 };
 
 const testReorder = async () => {
@@ -1060,6 +1120,8 @@ const run = async () => {
     await testPublishValid();
     await testPublishInvalidNamesFailures();
     await testFallbackTextRequiredWithMedia();
+    await testInterludeIsUnscored();
+    testInterludeExcludedFromScoring();
     await testReorder();
     await testLockForksOnEdit();
     await testAdminRouteAuthMatrix();

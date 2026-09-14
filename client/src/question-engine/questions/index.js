@@ -5,6 +5,7 @@ import { DragDrop } from "./DragDrop.jsx";
 import { Sequence } from "./Sequence.jsx";
 import { SplitScreen } from "./SplitScreen.jsx";
 import { HotspotVideo } from "./HotspotVideo.jsx";
+import { Interlude } from "./Interlude.jsx";
 
 export const QUESTION_COMPONENTS = {
   mcq: Mcq,
@@ -13,5 +14,6 @@ export const QUESTION_COMPONENTS = {
   drag_drop: DragDrop,
   sequence: Sequence,
   split_screen: SplitScreen,
-  hotspot_video: HotspotVideo
+  hotspot_video: HotspotVideo,
+  interlude: Interlude
 };

@@ -11,11 +11,12 @@ const TYPE_LABELS = {
   drag_drop: "Drag and drop",
   sequence: "Put in order",
   split_screen: "Compare two clips",
-  hotspot_video: "Spot it in the video"
+  hotspot_video: "Spot it in the video",
+  interlude: "Interlude (mandatory viewing, unscored)"
 };
 
 const usesOptions = type => ["mcq", "video_mcq", "animation_mcq", "split_screen", "hotspot_video"].includes(type);
-const usesMedia = type => ["video_mcq", "animation_mcq", "split_screen", "hotspot_video"].includes(type);
+const usesMedia = type => ["video_mcq", "animation_mcq", "split_screen", "hotspot_video", "interlude"].includes(type);
 
 const emptyForm = (levelKey = "") => ({
   levelKey,
@@ -28,7 +29,7 @@ const emptyForm = (levelKey = "") => ({
   feedback: { text: "", videoUrl: "", videoUrlB: "", imageUrl: "" },
   authoringNote: "",
   fallbackText: "",
-  media: { videoUrl: "", videoUrlB: "", posterUrl: "", riveSrc: "", loop: true, gateOnFirstPlay: false, durationSeconds: "" },
+  media: { videoUrl: "", videoUrlB: "", imageUrl: "", posterUrl: "", riveSrc: "", loop: true, gateOnFirstPlay: false, durationSeconds: "" },
   options: [{ key: "A", text: "" }, { key: "B", text: "" }],
   correct: "",
   items: [],
@@ -52,6 +53,7 @@ const questionToForm = q => ({
   media: {
     videoUrl: q.media?.videoUrl || "",
     videoUrlB: q.media?.videoUrlB || "",
+    imageUrl: q.media?.imageUrl || "",
     posterUrl: q.media?.posterUrl || "",
     riveSrc: q.media?.riveSrc || "",
     loop: q.media?.loop ?? true,
@@ -141,18 +143,41 @@ const MediaFieldsEditor = ({ form, setForm }) => {
           <p className="text-[11px] text-slate-500">Each side plays independently with its own controls. Both must be watched through once before the answer options unlock.</p>
         </>
       )}
+      {type === "interlude" && (
+        <>
+          <LabeledInput label="Video URL (1st clip)" value={form.media.videoUrl} onChange={v => set("videoUrl", v)} />
+          <LabeledInput label="Video URL (2nd clip)" value={form.media.videoUrlB} onChange={v => set("videoUrlB", v)} />
+          <LabeledInput label="Photo URL (optional)" value={form.media.imageUrl} onChange={v => set("imageUrl", v)} />
+          <p className="text-[11px] text-slate-500">
+            No options, not scored. Each clip plays independently; both are mandatory — Done stays disabled until both have played through once, then unlimited
+            replays. Use Prompt/Scenario above for the narrative text.
+          </p>
+        </>
+      )}
       <LabeledInput label="Fallback text (shown if media fails or is missing)" value={form.fallbackText} onChange={v => setForm(f => ({ ...f, fallbackText: v }))} textarea />
     </div>
   );
 };
 
-const LabeledInput = ({ label, value, onChange, type = "text", textarea = false }) => (
+const LabeledInput = ({ label, value, onChange, type = "text", textarea = false, disabled = false }) => (
   <label className="flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
     {label}
     {textarea ? (
-      <textarea value={value} onChange={e => onChange(e.target.value)} rows={2} className="rounded border border-[#3A4A63]/40 px-2 py-1 text-[12px] font-normal normal-case text-[#16243D]" />
+      <textarea
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        rows={2}
+        disabled={disabled}
+        className="rounded border border-[#3A4A63]/40 px-2 py-1 text-[12px] font-normal normal-case text-[#16243D] disabled:bg-slate-100 disabled:text-slate-400"
+      />
     ) : (
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} className="rounded border border-[#3A4A63]/40 px-2 py-1 text-[12px] font-normal normal-case text-[#16243D]" />
+      <input
+        type={type}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        disabled={disabled}
+        className="rounded border border-[#3A4A63]/40 px-2 py-1 text-[12px] font-normal normal-case text-[#16243D] disabled:bg-slate-100 disabled:text-slate-400"
+      />
     )}
   </label>
 );
@@ -494,7 +519,13 @@ export const QuestionBuilder = () => {
           <LabeledInput label="Title" value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))} />
           <LabeledInput label="Scenario (optional)" value={form.scenario} onChange={v => setForm(f => ({ ...f, scenario: v }))} textarea />
           <LabeledInput label="Prompt" value={form.prompt} onChange={v => setForm(f => ({ ...f, prompt: v }))} textarea />
-          <LabeledInput label="Points" type="number" value={form.points} onChange={v => setForm(f => ({ ...f, points: Number(v) }))} />
+          <LabeledInput
+            label={form.type === "interlude" ? "Points (always 0 — interlude is unscored)" : "Points"}
+            type="number"
+            value={form.type === "interlude" ? 0 : form.points}
+            onChange={v => setForm(f => ({ ...f, points: Number(v) }))}
+            disabled={form.type === "interlude"}
+          />
         </div>
 
         {/* Middle block — swaps by type, but nothing above ever moves. */}

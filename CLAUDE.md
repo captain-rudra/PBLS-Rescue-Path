@@ -167,14 +167,21 @@ next request fails. Do not replace this with a server-side session store.
 
 ## Question types
 
-Seven shapes, one collection, discriminated by `type`:
+Eight shapes, one collection, discriminated by `type`:
 
 ```
-mcq | video_mcq | animation_mcq | drag_drop | sequence | split_screen | hotspot_video
+mcq | video_mcq | animation_mcq | drag_drop | sequence | split_screen | hotspot_video | interlude
 ```
 
 Only the fields relevant to the type are validated. Do not try to force everything
-into `options` + `correct` — that pair cannot carry six formats.
+into `options` + `correct` — that pair cannot carry seven formats.
+
+`interlude` is the one type that is never scored — a mandatory-viewing bridge (e.g.
+between two levels), not an assessment item. It carries no `options`/`correct`, is
+excluded from accuracy, streak bonus, objective rollups and item analysis (SPEC 3.8),
+and skips the `feedback.text`-required check — everything else about it (append-only
+response, real timestamps, `deletedAt` not hard-delete, audited edits) is identical to
+every other type.
 
 **Every question with media requires `fallbackText`.** If the video does not load,
 the item must still be answerable. This is not a nicety; it is what keeps a session

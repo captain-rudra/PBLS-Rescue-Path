@@ -134,7 +134,12 @@ export const itemAnalysis = ({ questions, responses }) => {
 
   const feByQ = groupBy(fe, r => String(r.questionId));
 
+  // interlude has no right/wrong answer for difficulty or discrimination
+  // to mean anything against (SPEC 3.8) — every row would read as 100%
+  // difficulty with undefined discrimination, which isn't a real reading,
+  // just noise in the table.
   return questions
+    .filter(question => question.type !== "interlude")
     .map(question => {
       const rows = feByQ.get(question.questionId) || [];
       const n = rows.length;

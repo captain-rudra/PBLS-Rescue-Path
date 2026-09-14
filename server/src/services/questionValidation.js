@@ -1,5 +1,5 @@
 // The type-to-field mapping the admin builder and bank both need to agree
-// on, plus the eight publish-gate checks from docs/SPEC.md 4.4. Kept in
+// on, plus the nine publish-gate checks from docs/SPEC.md 4.4. Kept in
 // one place so "what does this type need" is answered identically
 // whichever screen is asking.
 import { OPTION_BASED_TYPES } from "./scoring.js";
@@ -15,7 +15,8 @@ export const MEDIA_FIELDS_BY_TYPE = Object.freeze({
   drag_drop: [],
   sequence: [],
   split_screen: ["videoUrl", "videoUrlB", "posterUrl"],
-  hotspot_video: ["videoUrl", "posterUrl", "gateOnFirstPlay", "durationSeconds"]
+  hotspot_video: ["videoUrl", "posterUrl", "gateOnFirstPlay", "durationSeconds"],
+  interlude: ["videoUrl", "videoUrlB", "imageUrl"]
 });
 
 // The subset of those fields that are actual required ASSETS — the ones
@@ -30,7 +31,8 @@ const REQUIRED_MEDIA_ASSETS_BY_TYPE = Object.freeze({
   drag_drop: [],
   sequence: [],
   split_screen: ["videoUrl", "videoUrlB"],
-  hotspot_video: ["videoUrl"]
+  hotspot_video: ["videoUrl"],
+  interlude: ["videoUrl", "videoUrlB"]
 });
 
 export const usesMedia = type => (MEDIA_FIELDS_BY_TYPE[type] || []).length > 0;
@@ -109,9 +111,19 @@ export const validateForPublish = (question, level) => {
     });
   }
 
-  // 6: feedback.text is present.
-  if (!isNonEmptyString(question.feedback?.text)) {
+  // 6: feedback.text is present — except interlude, which has no feedback
+  // stage in the player at all (SPEC 3.8) and always carries a fixed
+  // placeholder there instead, per sanitizeQuestionForType.
+  if (question.type !== "interlude" && !isNonEmptyString(question.feedback?.text)) {
     failures.push("feedback.text is required.");
+  }
+
+  // 9: interlude needs both of its two mandatory clips (SPEC 3.8) — the
+  // whole point is two watched-through videos, not zero or one.
+  if (question.type === "interlude") {
+    if (!isNonEmptyString(question.media?.videoUrl) || !isNonEmptyString(question.media?.videoUrlB)) {
+      failures.push("Both video URLs are required for an interlude.");
+    }
   }
 
   // 7: fallbackText required whenever media is attached.
@@ -183,6 +195,19 @@ const TYPE_FIELD_BUILDERS = Object.freeze({
     },
     hotspots: (input.hotspots || []).map(h => ({ tStart: h.tStart, tEnd: h.tEnd, x: h.x, y: h.y, r: h.r, isError: Boolean(h.isError), label: h.label || null })),
     fallbackText: input.fallbackText || null
+  }),
+  // No options, no correct — SPEC 3.8. Both clips are mandatory (checked
+  // in validateForPublish, check 9), unlike gateOnFirstPlay elsewhere
+  // there is no opt-out flag for it.
+  interlude: input => ({
+    options: [],
+    correct: null,
+    media: {
+      videoUrl: input.media?.videoUrl || null,
+      videoUrlB: input.media?.videoUrlB || null,
+      imageUrl: input.media?.imageUrl || null
+    },
+    fallbackText: input.fallbackText || null
   })
 });
 
@@ -197,6 +222,12 @@ export const sanitizeQuestionForType = input => {
   const builder = TYPE_FIELD_BUILDERS[input.type];
   if (!builder) throw new HttpError(400, "INVALID_TYPE", `Unknown question type: ${input.type}`);
 
+  // interlude has no feedback stage to show text in (SPEC 3.8) — the
+  // Mongoose schema still requires feedback.text to be non-empty, same as
+  // every other type, so an admin who leaves it blank gets this fixed
+  // placeholder rather than a save failure. Anything they DO type is kept.
+  const feedbackText = (input.feedback?.text || "").trim() || (input.type === "interlude" ? "No feedback — this is a mandatory-viewing interlude, not a scored item." : "");
+
   const common = {
     levelKey: input.levelKey,
     type: input.type,
@@ -204,9 +235,9 @@ export const sanitizeQuestionForType = input => {
     objective: (input.objective || "").trim(),
     scenario: input.scenario ? input.scenario.trim() : null,
     prompt: (input.prompt || "").trim(),
-    points: Number(input.points),
+    points: input.type === "interlude" ? 0 : Number(input.points),
     feedback: {
-      text: (input.feedback?.text || "").trim(),
+      text: feedbackText,
       videoUrl: input.feedback?.videoUrl || null,
       videoUrlB: input.feedback?.videoUrlB || null,
       imageUrl: input.feedback?.imageUrl || null
