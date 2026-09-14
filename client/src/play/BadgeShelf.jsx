@@ -32,9 +32,9 @@ export const BadgeShelf = ({ levels = [], achievements = [] }) => {
   const earnedCount = all.filter(badge => badge.earned).length;
 
   return (
-    <section className="mx-auto mt-3 max-w-md rounded-lg border border-[#3A4A63]/20 bg-white/60 px-3 py-3" data-testid="badge-shelf">
+    <section className="relative z-10 mx-auto mt-3 max-w-md rounded-xl border border-white/10 bg-white/[0.05] px-3 py-3 backdrop-blur-md" data-testid="badge-shelf">
       <div className="flex items-baseline justify-between">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Badge shelf</h2>
+        <h2 className="text-[11px] font-semibold uppercase tracking-wide text-slate-300">Badge shelf</h2>
         <span className="text-[11px] text-slate-400">
           {earnedCount}/{all.length} earned
         </span>

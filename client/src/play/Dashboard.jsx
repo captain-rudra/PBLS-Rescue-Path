@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { getLevels, getAchievements } from "../lib/api.js";
+import { getLevels, getAchievements, getMe } from "../lib/api.js";
 import { PathNode } from "./PathNode.jsx";
 import { BadgeShelf } from "./BadgeShelf.jsx";
 import { MuteToggle } from "../components/MuteToggle.jsx";
+import { GameBackground } from "../components/GameBackground.jsx";
 import { useMute } from "../hooks/useMute.js";
 
 // SPEC 2.6: "a winding path with one node per level." Nodes zigzag
@@ -19,6 +20,7 @@ export const Dashboard = () => {
   const [achievements, setAchievements] = useState([]);
   const [error, setError] = useState(null);
   const [muted, toggleMuted] = useMute();
+  const [participantCode, setParticipantCode] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
   const justUnlockedLevelKey = location.state?.justUnlockedLevelKey ?? null;
@@ -34,6 +36,11 @@ export const Dashboard = () => {
     getAchievements()
       .then(response => setAchievements(response.achievements))
       .catch(() => setAchievements([]));
+    // Purely a "who am I signed in as" label — never used for anything
+    // that matters (progress/scoring stays server-derived regardless).
+    getMe()
+      .then(response => setParticipantCode(response.participant?.code ?? null))
+      .catch(() => setParticipantCode(null));
   }, []);
 
   // A callback ref, not a plain ref + effect: the measured div only mounts
@@ -77,24 +84,30 @@ export const Dashboard = () => {
   const handleReview = level => navigate(`/review/${level.headline.attemptId}`);
 
   return (
-    <div className="min-h-screen bg-[#FFF7ED]">
-      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[#3A4A63]/20 bg-[#FFF7ED]/95 px-4 py-3 backdrop-blur">
+    <div className="relative min-h-screen overflow-x-hidden text-[#FFF7ED]">
+      <GameBackground />
+      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-[#0B1A2E]/80 px-4 py-3 backdrop-blur-xl">
         <div>
-          <h1 className="text-lg font-semibold text-[#16243D]" style={{ fontFamily: "Fredoka, sans-serif" }}>
+          <h1 className="text-lg font-semibold" style={{ fontFamily: "Fredoka, sans-serif" }}>
             The rescue path
           </h1>
-          <p className="text-[11px] text-slate-500">Master a level at 100% to move on — the pass mark just avoids a full restart.</p>
+          <p className="text-[11px] text-slate-300">Master a level at 100% to move on — the pass mark just avoids a full restart.</p>
+          {participantCode && (
+            <p className="mt-0.5 text-[10px] text-slate-400" data-testid="signed-in-as">
+              Signed in as <span className="font-mono font-semibold text-[#34D399]">{participantCode}</span>
+            </p>
+          )}
         </div>
         <MuteToggle muted={muted} onToggle={toggleMuted} />
       </header>
 
       {levels && <BadgeShelf levels={levels} achievements={achievements} />}
 
-      {error && <p className="px-4 py-6 text-sm text-[#FF6B5B]">{error}</p>}
-      {!levels && !error && <p className="px-4 py-6 text-sm text-slate-500">Loading the path…</p>}
+      {error && <p className="relative z-10 px-4 py-6 text-sm text-[#FF6B5B]">{error}</p>}
+      {!levels && !error && <p className="relative z-10 px-4 py-6 text-sm text-slate-300">Loading the path…</p>}
 
       {levels && (
-        <div ref={containerRef} className="relative mx-auto max-w-md" style={{ height: totalHeight }}>
+        <div ref={containerRef} className="relative z-10 mx-auto max-w-md" style={{ height: totalHeight }}>
           {width > 0 && (
             <svg className="absolute inset-0" width={width} height={totalHeight} viewBox={`0 0 ${width} ${totalHeight}`}>
               {positions.slice(1).map((point, i) => {

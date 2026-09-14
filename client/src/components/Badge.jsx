@@ -99,7 +99,7 @@ export const Badge = ({ badgeKey, name, accent = PALETTE.gold, Icon, earned = fa
         animate={animateReveal ? { opacity: 1, y: 0 } : {}}
         transition={animateReveal ? { delay: 0.42 } : undefined}
       >
-        <span className="block text-[12px] font-semibold" style={{ color: earned ? PALETTE.navy : "#94a3b8" }}>
+        <span className="block text-[12px] font-semibold" style={{ color: earned ? PALETTE.cream : "#94a3b8" }}>
           {name}
         </span>
         {subtitle && <span className="block text-[10px] text-slate-400">{subtitle}</span>}

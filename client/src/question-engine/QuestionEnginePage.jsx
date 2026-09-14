@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
-import { startAttempt, submitAttempt } from "../lib/api.js";
+import { startAttempt, submitAttempt, getMe } from "../lib/api.js";
 import { Hud } from "./Hud.jsx";
 import { QuestionRunner } from "./QuestionRunner.jsx";
 import { RoscSequence } from "../play/RoscSequence.jsx";
@@ -82,6 +82,14 @@ export const QuestionEnginePage = () => {
   // refire. This token forces the reload regardless of whether `kind`
   // itself actually changed.
   const [reloadToken, setReloadToken] = useState(0);
+  // Purely a "who am I" label in the HUD (matches the Dashboard's own) —
+  // never used for anything that affects scoring or progression.
+  const [participantCode, setParticipantCode] = useState(null);
+  useEffect(() => {
+    getMe()
+      .then(response => setParticipantCode(response.participant?.code ?? null))
+      .catch(() => setParticipantCode(null));
+  }, []);
 
   const load = useCallback(async () => {
     const requestId = ++requestIdRef.current;
@@ -196,6 +204,7 @@ export const QuestionEnginePage = () => {
         points={state.points}
         streak={state.streak}
         pointsFlash={state.pointsFlash}
+        participantCode={participantCode}
       />
       <AnimatePresence mode="wait">
         <QuestionRunner

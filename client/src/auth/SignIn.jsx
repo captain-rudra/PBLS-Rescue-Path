@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { loginPlay, setPlayPin } from "../lib/api.js";
 import { setToken } from "../lib/auth.js";
+import { GameBackground } from "../components/GameBackground.jsx";
 
 // SPEC 6.1/6.3 — sign in with a pre-generated code and a 4-digit PIN the
 // participant chooses on first use. No email, no password, no
@@ -120,24 +121,25 @@ export const SignIn = () => {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#FFF7ED] px-4 text-[#16243D]">
+    <div className="relative flex min-h-screen items-center justify-center overflow-x-hidden px-4 text-[#FFF7ED]">
+      <GameBackground />
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className="w-full max-w-sm rounded-lg border border-[#3A4A63]/20 bg-white/60 p-6"
+        className="relative z-10 w-full max-w-sm rounded-xl border border-white/10 bg-white/[0.06] p-6 shadow-[0_0_50px_rgba(52,211,153,0.12)] backdrop-blur-xl"
       >
         <h1 className="text-xl font-semibold" style={{ fontFamily: "Fredoka, sans-serif" }}>
           The rescue path
         </h1>
-        <p className="mt-1 text-[12px] text-slate-500">Sign in with the code on your printed slip.</p>
+        <p className="mt-1 text-[12px] text-slate-300">Sign in with the code on your printed slip.</p>
 
-        {notice && <p className="mt-3 rounded-md bg-[#FFC94A]/15 px-3 py-2 text-[12px] text-[#16243D]">{notice}</p>}
-        {error && <p className="mt-3 rounded-md bg-[#FF6B5B]/10 px-3 py-2 text-[12px] text-[#FF6B5B]">{error}</p>}
+        {notice && <p className="mt-3 rounded-md bg-[#FFC94A]/15 px-3 py-2 text-[12px] text-[#FFF7ED]">{notice}</p>}
+        {error && <p className="mt-3 rounded-md bg-[#FF6B5B]/15 px-3 py-2 text-[12px] text-[#FF6B5B]">{error}</p>}
 
         {step === "code" && (
           <form onSubmit={handleCodeSubmit} className="mt-5 flex flex-col gap-3">
-            <label className="flex flex-col gap-1 text-[12px] font-semibold uppercase tracking-wide text-slate-500">
+            <label className="flex flex-col gap-1 text-[12px] font-semibold uppercase tracking-wide text-slate-300">
               Code
               <input
                 data-testid="signin-code"
@@ -161,10 +163,10 @@ export const SignIn = () => {
 
         {step === "pin" && (
           <form onSubmit={handlePinSubmit} className="mt-5 flex flex-col gap-3">
-            <p className="text-[12px] text-slate-500">
-              Code <span className="font-semibold text-[#16243D]">{code.trim()}</span>
+            <p className="text-[12px] text-slate-300">
+              Code <span className="font-semibold text-[#34D399]">{code.trim()}</span>
             </p>
-            <label className="flex flex-col gap-1 text-[12px] font-semibold uppercase tracking-wide text-slate-500">
+            <label className="flex flex-col gap-1 text-[12px] font-semibold uppercase tracking-wide text-slate-300">
               4-digit PIN
               <input
                 data-testid="signin-pin"
@@ -184,7 +186,7 @@ export const SignIn = () => {
             >
               {busy ? "Signing in…" : "Sign in"}
             </button>
-            <button type="button" onClick={backToCode} className="text-[11px] text-slate-500 underline">
+            <button type="button" onClick={backToCode} className="text-[11px] text-slate-300 underline">
               Not your code? Start over
             </button>
           </form>
@@ -192,10 +194,10 @@ export const SignIn = () => {
 
         {step === "setpin" && (
           <form onSubmit={handleSetPinSubmit} className="mt-5 flex flex-col gap-3">
-            <p className="text-[12px] text-slate-500">
-              First time signing in with <span className="font-semibold text-[#16243D]">{code.trim()}</span> — choose a 4-digit PIN.
+            <p className="text-[12px] text-slate-300">
+              First time signing in with <span className="font-semibold text-[#34D399]">{code.trim()}</span> — choose a 4-digit PIN.
             </p>
-            <label className="flex flex-col gap-1 text-[12px] font-semibold uppercase tracking-wide text-slate-500">
+            <label className="flex flex-col gap-1 text-[12px] font-semibold uppercase tracking-wide text-slate-300">
               Choose a PIN
               <input
                 data-testid="signin-new-pin"
@@ -207,7 +209,7 @@ export const SignIn = () => {
                 className="rounded-md border border-[#3A4A63]/40 bg-white px-3 py-2 text-center text-[20px] tracking-[0.5em] text-[#16243D] focus:border-[#34D399] focus:outline-none"
               />
             </label>
-            <label className="flex flex-col gap-1 text-[12px] font-semibold uppercase tracking-wide text-slate-500">
+            <label className="flex flex-col gap-1 text-[12px] font-semibold uppercase tracking-wide text-slate-300">
               Confirm PIN
               <input
                 data-testid="signin-confirm-pin"
@@ -226,7 +228,7 @@ export const SignIn = () => {
             >
               {busy ? "Saving…" : "Set PIN and start"}
             </button>
-            <button type="button" onClick={backToCode} className="text-[11px] text-slate-500 underline">
+            <button type="button" onClick={backToCode} className="text-[11px] text-slate-300 underline">
               Not your code? Start over
             </button>
           </form>

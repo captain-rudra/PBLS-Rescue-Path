@@ -3,7 +3,7 @@ import { VitalsBar } from "./VitalsBar.jsx";
 import { EcgLine } from "./EcgLine.jsx";
 import { pointsFlyVariants } from "./motion.js";
 
-export const Hud = ({ levelTitle, scene, questionNumber, totalQuestions, vitalsPercent, vitalsState, points, streak, pointsFlash }) => {
+export const Hud = ({ levelTitle, scene, questionNumber, totalQuestions, vitalsPercent, vitalsState, points, streak, pointsFlash, participantCode }) => {
   const alarming = vitalsState === "two_errors" || vitalsState === "critical";
 
   return (
@@ -11,7 +11,10 @@ export const Hud = ({ levelTitle, scene, questionNumber, totalQuestions, vitalsP
       <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold" style={{ fontFamily: "Fredoka, sans-serif" }}>{levelTitle}</p>
-          <p className="text-[10px] uppercase tracking-wide text-slate-400">{scene}</p>
+          <p className="text-[10px] uppercase tracking-wide text-slate-400">
+            {scene}
+            {participantCode && <span className="text-slate-500"> · {participantCode}</span>}
+          </p>
         </div>
 
         <div className="text-[11px] font-medium text-slate-200">

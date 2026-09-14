@@ -3,6 +3,7 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import Rive, { Layout, Fit } from "@rive-app/react-canvas";
 import { getAttemptReview, getLevelAttempts, reportReviewTime } from "../lib/api.js";
+import { GameBackground } from "../components/GameBackground.jsx";
 
 // SPEC 2.6 — the read-only level review. Reached from the result card after
 // an attempt is submitted (SPEC 2.7), AND persistently from the dashboard
@@ -304,19 +305,36 @@ export const LevelReview = () => {
 
   if (error) {
     return (
-      <div className="mx-auto max-w-lg px-4 py-10 text-center text-[#16243D]">
-        <p className="text-sm text-[#FF6B5B]">{error}</p>
-        <button type="button" onClick={done} className="mt-3 text-xs underline">
-          Back to the path
-        </button>
+      <div className="relative min-h-screen overflow-x-hidden text-[#FFF7ED]">
+        <GameBackground />
+        <div className="relative z-10 mx-auto max-w-lg px-4 py-10 text-center">
+          <p className="text-sm text-[#FF6B5B]">{error}</p>
+          <button type="button" onClick={done} className="mt-3 text-xs underline">
+            Back to the path
+          </button>
+        </div>
       </div>
     );
   }
-  if (!data) return <p className="px-4 py-10 text-center text-sm text-slate-500">Loading review…</p>;
+  if (!data) {
+    return (
+      <div className="relative min-h-screen overflow-x-hidden text-[#FFF7ED]">
+        <GameBackground />
+        <p className="relative z-10 px-4 py-10 text-center text-sm text-slate-300">Loading review…</p>
+      </div>
+    );
+  }
 
   return (
-    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} className="min-h-screen bg-[#FFF7ED] text-[#16243D]">
-      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[#3A4A63]/20 bg-[#FFF7ED]/95 px-4 py-3 backdrop-blur">
+    <div className="relative min-h-screen overflow-x-hidden text-[#16243D]">
+      <GameBackground />
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="relative z-10 mx-auto min-h-screen max-w-3xl bg-[#FFF7ED] shadow-[0_0_60px_rgba(0,0,0,0.4)] sm:my-6 sm:min-h-0 sm:rounded-2xl"
+      >
+      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[#3A4A63]/20 bg-[#FFF7ED]/95 px-4 py-3 backdrop-blur sm:rounded-t-2xl">
         <div>
           <h1 className="text-lg font-semibold" style={{ fontFamily: "Fredoka, sans-serif" }}>
             Answer review
@@ -407,6 +425,7 @@ export const LevelReview = () => {
           Done
         </button>
       </div>
-    </motion.div>
+      </motion.div>
+    </div>
   );
 };

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { getLevels } from "../lib/api.js";
 import { MuteToggle } from "../components/MuteToggle.jsx";
+import { GameBackground } from "../components/GameBackground.jsx";
 import { useMute } from "../hooks/useMute.js";
 
 const FORMAT_LABELS = {
@@ -44,21 +45,34 @@ export const MissionBriefing = () => {
 
   if (error) {
     return (
-      <div className="mx-auto max-w-md px-4 py-10 text-center text-[#16243D]">
-        <p className="text-sm text-[#FF6B5B]">{error}</p>
-        <Link to="/" className="mt-3 inline-block text-xs underline">Back to the path</Link>
+      <div className="relative min-h-screen overflow-x-hidden text-[#FFF7ED]">
+        <GameBackground />
+        <div className="relative z-10 mx-auto max-w-md px-4 py-10 text-center">
+          <p className="text-sm text-[#FF6B5B]">{error}</p>
+          <Link to="/" className="mt-3 inline-block text-xs underline">Back to the path</Link>
+        </div>
       </div>
     );
   }
-  if (!levels) return <p className="px-4 py-10 text-center text-sm text-slate-500">Loading briefing…</p>;
+  if (!levels) {
+    return (
+      <div className="relative min-h-screen overflow-x-hidden text-[#FFF7ED]">
+        <GameBackground />
+        <p className="relative z-10 px-4 py-10 text-center text-sm text-slate-300">Loading briefing…</p>
+      </div>
+    );
+  }
 
   const index = levels.findIndex(l => l.key === levelKey);
   const level = levels[index];
   if (!level) {
     return (
-      <div className="mx-auto max-w-md px-4 py-10 text-center text-[#16243D]">
-        <p className="text-sm text-[#FF6B5B]">No such level.</p>
-        <Link to="/" className="mt-3 inline-block text-xs underline">Back to the path</Link>
+      <div className="relative min-h-screen overflow-x-hidden text-[#FFF7ED]">
+        <GameBackground />
+        <div className="relative z-10 mx-auto max-w-md px-4 py-10 text-center">
+          <p className="text-sm text-[#FF6B5B]">No such level.</p>
+          <Link to="/" className="mt-3 inline-block text-xs underline">Back to the path</Link>
+        </div>
       </div>
     );
   }
@@ -68,32 +82,33 @@ export const MissionBriefing = () => {
   const complete = level.state === "complete";
 
   return (
-    <div className="min-h-screen bg-[#FFF7ED] text-[#16243D]">
-      <header className="flex items-center justify-between border-b border-[#3A4A63]/20 px-4 py-3">
+    <div className="relative min-h-screen overflow-x-hidden text-[#FFF7ED]">
+      <GameBackground />
+      <header className="relative z-10 flex items-center justify-between border-b border-white/10 bg-[#0B1A2E]/70 px-4 py-3 backdrop-blur-xl">
         <Link to="/" className="text-xs underline">← The rescue path</Link>
         <MuteToggle muted={muted} onToggle={toggleMuted} />
       </header>
 
-      <div className="mx-auto max-w-lg px-4 py-8">
+      <div className="relative z-10 mx-auto max-w-lg px-4 py-8">
         <p className="text-[10px] uppercase tracking-wide text-slate-400">{level.scene}</p>
         <h1 className="mt-1 text-2xl font-semibold" style={{ fontFamily: "Fredoka, sans-serif" }}>
           {level.title}
         </h1>
-        <p className="mt-2 text-[13px] italic text-slate-500">{scenarioLineFor(level)}</p>
+        <p className="mt-2 text-[13px] italic text-slate-300">{scenarioLineFor(level)}</p>
 
         {locked && (
-          <div className="mt-6 rounded-md border border-[#3A4A63] bg-white/60 px-4 py-3 text-sm">
-            <p className="text-[#16243D]">🔒 This level isn't open yet.</p>
-            <p className="mt-1 text-[12px] text-slate-500">
+          <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm backdrop-blur-md">
+            <p>🔒 This level isn't open yet.</p>
+            <p className="mt-1 text-[12px] text-slate-300">
               {previousLevel ? `Master "${previousLevel.title}" at 100% to unlock it.` : "It will unlock as you progress."}
             </p>
           </div>
         )}
 
         {complete && (
-          <div className="mt-6 rounded-md border border-[#34D399]/40 bg-[#34D399]/10 px-4 py-3 text-sm">
-            <p className="text-[#16243D]">✓ Mastered at 100%.</p>
-            <p className="mt-1 text-[12px] text-slate-500">
+          <div className="mt-6 rounded-xl border border-[#34D399]/30 bg-[#34D399]/10 px-4 py-3 text-sm shadow-[0_0_30px_rgba(52,211,153,0.1)] backdrop-blur-md">
+            <p>✓ Mastered at 100%.</p>
+            <p className="mt-1 text-[12px] text-slate-300">
               First-attempt score: {level.headline?.accuracy}% ({level.starsAwarded} star{level.starsAwarded === 1 ? "" : "s"}) · restarts: {level.restartCount} · remediation rounds: {level.remediationCount}
             </p>
             {level.headline?.attemptId && (
@@ -101,7 +116,7 @@ export const MissionBriefing = () => {
                 type="button"
                 data-testid="briefing-review"
                 onClick={() => navigate(`/review/${level.headline.attemptId}`)}
-                className="mt-3 w-full rounded-md border border-[#3A4A63]/40 bg-white/60 px-4 py-2.5 text-[13px] font-semibold text-[#16243D] transition hover:bg-white"
+                className="mt-3 w-full rounded-md border border-white/15 bg-white/[0.06] px-4 py-2.5 text-[13px] font-semibold text-[#FFF7ED] transition hover:bg-white/10"
               >
                 Review answers
               </button>
@@ -112,7 +127,7 @@ export const MissionBriefing = () => {
         {!locked && !complete && (
           <>
             <section className="mt-6">
-              <h2 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Objectives</h2>
+              <h2 className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Objectives</h2>
               <ul className="mt-2 flex flex-col gap-1.5">
                 {level.objectives.map(objective => (
                   <li key={objective} className="flex items-start gap-2 text-[13px]">
@@ -123,21 +138,21 @@ export const MissionBriefing = () => {
               </ul>
             </section>
 
-            <section className="mt-6 grid grid-cols-2 gap-3 rounded-md border border-[#3A4A63]/30 bg-white/60 p-4 text-[12px]">
+            <section className="mt-6 grid grid-cols-2 gap-3 rounded-xl border border-white/10 bg-white/[0.05] p-4 text-[12px] backdrop-blur-md">
               <div>
-                <p className="text-slate-500">Questions</p>
+                <p className="text-slate-400">Questions</p>
                 <p className="font-semibold">{level.questionCount}</p>
               </div>
               <div>
-                <p className="text-slate-500">Pass mark</p>
+                <p className="text-slate-400">Pass mark</p>
                 <p className="font-semibold">{level.passMark}%</p>
               </div>
               <div>
-                <p className="text-slate-500">Badge on mastery</p>
+                <p className="text-slate-400">Badge on mastery</p>
                 <p className="font-semibold">{level.badge}</p>
               </div>
               <div>
-                <p className="text-slate-500">Formats</p>
+                <p className="text-slate-400">Formats</p>
                 <p className="font-semibold">{level.formats.map(f => FORMAT_LABELS[f] || f).join(", ") || "—"}</p>
               </div>
             </section>
@@ -157,7 +172,7 @@ export const MissionBriefing = () => {
               type="button"
               data-testid="begin-rescue"
               onClick={() => navigate(`/play/${level.key}?kind=${kindFor(level.state)}`)}
-              className="mt-6 w-full rounded-md bg-[#34D399] px-4 py-3 text-sm font-semibold text-[#16243D] transition hover:brightness-95"
+              className="mt-6 w-full rounded-md bg-[#34D399] px-4 py-3 text-sm font-semibold text-[#16243D] shadow-[0_0_30px_rgba(52,211,153,0.35)] transition hover:brightness-95"
             >
               Begin rescue
             </button>
@@ -167,7 +182,7 @@ export const MissionBriefing = () => {
                 type="button"
                 data-testid="briefing-review"
                 onClick={() => navigate(`/review/${level.headline.attemptId}`)}
-                className="mt-2 w-full rounded-md border border-[#3A4A63]/40 bg-white/60 px-4 py-2.5 text-[13px] font-semibold text-[#16243D] transition hover:bg-white"
+                className="mt-2 w-full rounded-md border border-white/15 bg-white/[0.06] px-4 py-2.5 text-[13px] font-semibold text-[#FFF7ED] transition hover:bg-white/10"
               >
                 Review answers
               </button>

@@ -73,15 +73,18 @@ export const PathNode = ({ level, x, y, justUnlocked, onSelect, onReview }) => {
             ? { boxShadow: { duration: 1, repeat: Infinity, ease: "easeOut" }, default: { duration: 0.9 } }
             : { duration: 0.9 }
         }
-        className="flex flex-col items-center justify-center rounded-full border-2 font-semibold"
+        whileHover={interactive ? { scale: 1.08, rotateX: 10, rotateY: -10 } : {}}
+        whileTap={interactive ? { scale: 0.96 } : {}}
         style={{
           width: style.size,
           height: style.size,
           borderColor: style.border,
           backgroundColor: style.fill,
           color: style.text,
-          cursor: interactive ? "pointer" : "not-allowed"
+          cursor: interactive ? "pointer" : "not-allowed",
+          transformPerspective: 400
         }}
+        className="flex flex-col items-center justify-center rounded-full border-2 font-semibold"
       >
         <span className="text-lg leading-none">
           <Glyph state={level.state} />
@@ -92,8 +95,8 @@ export const PathNode = ({ level, x, y, justUnlocked, onSelect, onReview }) => {
       {showStars && <Stars count={level.starsAwarded} />}
 
       <div className="mt-1 max-w-[9rem] text-center">
-        <p className="text-[11px] font-semibold text-[#16243D]">{level.title}</p>
-        <p className="text-[10px] text-slate-500">{level.scene}</p>
+        <p className="text-[11px] font-semibold text-[#FFF7ED]">{level.title}</p>
+        <p className="text-[10px] text-slate-300">{level.scene}</p>
         <p className="text-[9px] text-slate-400">{CAPTIONS[level.state] ?? `Pass mark ${level.passMark}%`}</p>
       </div>
 
@@ -102,7 +105,7 @@ export const PathNode = ({ level, x, y, justUnlocked, onSelect, onReview }) => {
           type="button"
           data-testid={`review-node-${level.key}`}
           onClick={() => onReview(level)}
-          className="mt-1 text-[9px] font-semibold uppercase tracking-wide text-[#3A4A63] underline underline-offset-2 hover:text-[#16243D]"
+          className="mt-1 text-[9px] font-semibold uppercase tracking-wide text-slate-400 underline underline-offset-2 hover:text-[#34D399]"
         >
           Review answers
         </button>
