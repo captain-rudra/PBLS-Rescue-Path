@@ -82,6 +82,10 @@ export const QuestionPreview = ({ form, onClose }) => {
           <div className="mt-4 rounded-md bg-[#1E3050]/10 px-3 py-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Feedback</p>
             <p className="mt-0.5 text-[12px] leading-relaxed">{form.feedback.text || "(no feedback text yet)"}</p>
+            {form.feedback.videoUrl && (
+              // eslint-disable-next-line jsx-a11y/media-has-caption
+              <video data-testid="preview-feedback-video" src={form.feedback.videoUrl} controls className="mt-2 max-h-56 w-full rounded-md bg-black" />
+            )}
           </div>
         )}
       </div>
