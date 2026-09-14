@@ -2,12 +2,16 @@
   "name": "pbls-rescue-path",
   "private": true,
   "type": "module",
+  "engines": { "node": ">=20.10" },
   "workspaces": ["client", "server"],
   "scripts": {
     "dev": "node scripts/dev.js",
     "dev:server": "npm run dev --workspace server",
     "dev:client": "npm run dev --workspace client",
     "seed": "npm run seed --workspace server",
-    "seed:validate": "npm run seed:validate --workspace server"
+    "seed:validate": "npm run seed:validate --workspace server",
+    "build": "npm run build --workspace client",
+    "start": "npm run start --workspace server",
+    "create-super-admin": "npm run create-super-admin --workspace server"
   }
 }

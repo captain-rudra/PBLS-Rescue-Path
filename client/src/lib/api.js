@@ -2,6 +2,7 @@
 // participant token (see lib/auth.js) unless explicitly told not to — the
 // two sign-in calls are the only ones made before a token exists.
 import { getToken, signalSignedOut } from "./auth.js";
+import { API_BASE } from "./apiBase.js";
 
 const coreFetch = async (path, { method = "GET", body, auth = true } = {}) => {
   const headers = {};
@@ -11,7 +12,7 @@ const coreFetch = async (path, { method = "GET", body, auth = true } = {}) => {
     if (token) headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  const res = await fetch(`${API_BASE}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const json = await res.json().catch(() => null);
   if (!res.ok) {
     // A 401 on an authenticated call means the token is gone for good
@@ -51,7 +52,7 @@ export const reportReviewTime = (attemptId, ms) => {
   const token = getToken();
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  return fetch(`/play/attempts/${attemptId}/review-time`, {
+  return fetch(`${API_BASE}/play/attempts/${attemptId}/review-time`, {
     method: "POST",
     headers,
     body: JSON.stringify({ ms }),

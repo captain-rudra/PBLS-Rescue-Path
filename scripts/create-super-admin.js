@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
+import { connectDB, disconnectDB } from "../server/src/db.js";
 import Admin from "../server/src/models/Admin.js";
 import { hashSecret } from "../server/src/services/auth.js";
 import { ROLES } from "../shared/constants.js";
@@ -47,14 +48,14 @@ const main = async () => {
     return;
   }
 
-  await mongoose.connect(process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/pbls_rescue_path");
+  await connectDB();
 
   const normalizedEmail = email.trim().toLowerCase();
   const existing = await Admin.findOne({ email: normalizedEmail });
   if (existing) {
     console.error(`Error: an admin with email ${normalizedEmail} already exists (id ${existing._id})`);
     process.exitCode = 1;
-    await mongoose.disconnect();
+    await disconnectDB();
     return;
   }
 
@@ -62,7 +63,7 @@ const main = async () => {
   const admin = await Admin.create({ email: normalizedEmail, passwordHash, name: name.trim(), role, active: true });
 
   console.log(`Created ${role}: ${admin.email} (id ${admin._id})`);
-  await mongoose.disconnect();
+  await disconnectDB();
 };
 
 main().catch(async error => {

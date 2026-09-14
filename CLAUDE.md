@@ -89,7 +89,14 @@ npm run dev          # both, concurrently
 npm run dev:server
 npm run dev:client
 npm run seed         # wipes nothing — upserts by (levelKey, sequence)
-npm run seed:reset   # drops content collections, then seeds. Never run against real data
+npm run seed:reset   # NOT YET IMPLEMENTED as a script — see docs/DEPLOY.md
+                      # §4. The intent (drop content collections, then
+                      # seed; never against real data) is documented here
+                      # as a reminder of what it must do whenever it's
+                      # actually written — don't improvise the drop
+                      # against a real database in the meantime.
+npm run build        # production client build (client/dist)
+npm run start        # production server (no --watch) — see docs/DEPLOY.md
 ```
 
 ---

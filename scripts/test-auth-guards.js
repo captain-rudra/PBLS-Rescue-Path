@@ -28,6 +28,7 @@ import Participant from "../server/src/models/Participant.js";
 import { assertNotSelfDemotion, assertSuperAdminSurvives } from "../server/src/services/adminSafety.js";
 import { requireParticipant } from "../server/src/middleware/requireParticipant.js";
 import { requireAdmin } from "../server/src/middleware/requireAdmin.js";
+import { assertProductionEnv } from "../server/src/lib/assertProductionEnv.js";
 import { HttpError } from "../server/src/lib/httpError.js";
 import { ROLES } from "../shared/constants.js";
 
@@ -263,6 +264,43 @@ const testDevBypassTwoGate = async () => {
   log("dev-bypass two-gate condition OK: NODE_ENV and ALLOW_DEV_AUTH_BYPASS are both independently load-bearing, not decorative");
 };
 
+// Deploy-readiness guard (docs/DEPLOY.md): the bypass is already inert in
+// production on its own (proven above), but the server must still refuse
+// to START — not just silently ignore it — if any dev-only var is set
+// alongside NODE_ENV=production, since that combination is a strong sign a
+// dev .env leaked into a prod environment.
+const testAssertProductionEnv = () => {
+  const cases = [
+    { env: { NODE_ENV: "production", ALLOW_DEV_AUTH_BYPASS: "true" }, label: "ALLOW_DEV_AUTH_BYPASS set" },
+    { env: { NODE_ENV: "production", DEV_ADMIN_ID: "6aa8719f99b307a30b82a357" }, label: "DEV_ADMIN_ID set" },
+    { env: { NODE_ENV: "production", DEV_PARTICIPANT_ID: "6aa8719f99b307a30b82a357" }, label: "DEV_PARTICIPANT_ID set" }
+  ];
+  for (const { env, label } of cases) {
+    assert.throws(() => assertProductionEnv(env), /Refusing to start/, `must refuse to start in production when ${label}`);
+  }
+
+  // None of these are a problem outside production...
+  assert.doesNotThrow(() => assertProductionEnv({ NODE_ENV: "development", ALLOW_DEV_AUTH_BYPASS: "true", DEV_ADMIN_ID: "x" }), "must not throw outside production, regardless of what's set");
+  // ...and a clean production env (nothing dev-only set) must start fine.
+  assert.doesNotThrow(() => assertProductionEnv({ NODE_ENV: "production" }), "must not throw in production when no dev-only var is set");
+
+  log("assertProductionEnv OK: refuses to start on any dev-only var in production, silent everywhere else");
+};
+
+// connectDB() falls back to a local Mongo when MONGODB_URI is unset — a
+// deliberate convenience for `npm run dev` with zero config — but that
+// fallback must never fire in production, where a missing env var should
+// fail loudly rather than quietly point at nothing durable. resolveUri()
+// runs (and can throw) as connectDB's default-parameter expression, before
+// mongoose.connect is ever called, so this never touches the real
+// connection this test run already has open.
+const testConnectDBRefusesLocalFallbackInProduction = async () => {
+  await withEnv({ NODE_ENV: "production", MONGODB_URI: undefined }, async () => {
+    await assert.rejects(() => connectDB(), /MONGODB_URI is not set/, "connectDB must refuse the local fallback when NODE_ENV=production and MONGODB_URI is unset");
+  });
+  log("connectDB OK: refuses the local-Mongo fallback in production when MONGODB_URI is unset");
+};
+
 const teardown = async () => {
   if (createdAdminIds.length) await Admin.deleteMany({ _id: { $in: createdAdminIds } });
   if (createdParticipantIds.length) await Participant.deleteMany({ _id: { $in: createdParticipantIds } });
@@ -275,6 +313,8 @@ const run = async () => {
     await testAssertNotSelfDemotion();
     await testAssertSuperAdminSurvives();
     await testDevBypassTwoGate();
+    testAssertProductionEnv();
+    await testConnectDBRefusesLocalFallbackInProduction();
     log("ALL CHECKS PASSED");
   } finally {
     await teardown();

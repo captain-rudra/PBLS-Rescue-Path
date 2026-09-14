@@ -1,6 +1,7 @@
 // Thin fetch wrapper for the admin console, mirroring lib/api.js's shape
 // but against the admin token and the /admin + /auth/admin routes.
 import { getAdminToken, signalAdminSignedOut } from "./adminAuth.js";
+import { API_BASE } from "./apiBase.js";
 
 const coreFetch = async (path, { method = "GET", body, auth = true } = {}) => {
   const headers = {};
@@ -10,7 +11,7 @@ const coreFetch = async (path, { method = "GET", body, auth = true } = {}) => {
     if (token) headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  const res = await fetch(`${API_BASE}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const json = await res.json().catch(() => null);
   if (!res.ok) {
     if (res.status === 401 && auth) signalAdminSignedOut(json?.error?.code);
@@ -91,7 +92,7 @@ export const getRecordsTrail = (participantId, levelKey) =>
 // Content-Disposition (it encodes the include choices — SPEC §11).
 export const downloadExport = async (file, scope = {}) => {
   const token = getAdminToken();
-  const res = await fetch(`/admin/records/export?file=${file}${scopeQuery(scope).replace(/^\?/, "&")}`, {
+  const res = await fetch(`${API_BASE}/admin/records/export?file=${file}${scopeQuery(scope).replace(/^\?/, "&")}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
   });
   if (!res.ok) {

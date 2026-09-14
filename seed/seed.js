@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import mongoose from "mongoose";
+import { connectDB, disconnectDB } from "../server/src/db.js";
 import Level from "../server/src/models/Level.js";
 import Question from "../server/src/models/Question.js";
 import levels from "./levels.json" with { type: "json" };
@@ -69,7 +70,7 @@ const seed = async () => {
     return;
   }
   dotenv.config();
-  await mongoose.connect(process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/pbls_rescue_path");
+  await connectDB();
   const levelIds = new Map();
   for (const level of levels) {
     const saved = await Level.findOneAndUpdate({ key: level.key }, { $set: level, $setOnInsert: { deletedAt: null } }, { upsert: true, returnDocument: "after", runValidators: true });
@@ -88,7 +89,7 @@ const seed = async () => {
     );
   }
   console.log(`Seeded ${levels.length} levels and ${questionCount} questions`);
-  await mongoose.disconnect();
+  await disconnectDB();
 };
 
 seed().catch(async error => {
