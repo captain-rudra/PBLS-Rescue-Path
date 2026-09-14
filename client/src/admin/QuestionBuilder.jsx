@@ -25,7 +25,7 @@ const emptyForm = (levelKey = "") => ({
   scenario: "",
   prompt: "",
   points: 120,
-  feedback: { text: "", videoUrl: "", imageUrl: "" },
+  feedback: { text: "", videoUrl: "", videoUrlB: "", imageUrl: "" },
   authoringNote: "",
   fallbackText: "",
   media: { videoUrl: "", videoUrlB: "", posterUrl: "", riveSrc: "", loop: true, gateOnFirstPlay: false, sharedScrub: true, durationSeconds: "" },
@@ -46,7 +46,7 @@ const questionToForm = q => ({
   scenario: q.scenario || "",
   prompt: q.prompt || "",
   points: q.points ?? 120,
-  feedback: { text: q.feedback?.text || "", videoUrl: q.feedback?.videoUrl || "", imageUrl: q.feedback?.imageUrl || "" },
+  feedback: { text: q.feedback?.text || "", videoUrl: q.feedback?.videoUrl || "", videoUrlB: q.feedback?.videoUrlB || "", imageUrl: q.feedback?.imageUrl || "" },
   authoringNote: q.authoringNote || "",
   fallbackText: q.fallbackText || "",
   media: {
@@ -514,6 +514,11 @@ export const QuestionBuilder = () => {
         <div className="mt-4 flex flex-col gap-3 rounded-md border border-[#3A4A63]/20 bg-white/60 p-3">
           <LabeledInput label="Feedback text" value={form.feedback.text} onChange={v => setForm(f => ({ ...f, feedback: { ...f.feedback, text: v } }))} textarea />
           <LabeledInput label="Feedback video URL (optional)" value={form.feedback.videoUrl} onChange={v => setForm(f => ({ ...f, feedback: { ...f.feedback, videoUrl: v } }))} />
+          <LabeledInput
+            label="Feedback video URL (side B, optional — shown side by side with the one above)"
+            value={form.feedback.videoUrlB}
+            onChange={v => setForm(f => ({ ...f, feedback: { ...f.feedback, videoUrlB: v } }))}
+          />
           <LabeledInput label="Feedback image URL (optional)" value={form.feedback.imageUrl} onChange={v => setForm(f => ({ ...f, feedback: { ...f.feedback, imageUrl: v } }))} />
           <LabeledInput label="Authoring note (optional, internal)" value={form.authoringNote} onChange={v => setForm(f => ({ ...f, authoringNote: v }))} textarea />
         </div>

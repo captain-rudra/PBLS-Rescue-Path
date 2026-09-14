@@ -381,9 +381,17 @@ export const LevelReview = () => {
                 {item.feedbackImageUrl && (
                   <img data-testid={`review-feedback-image-${item.questionId}`} src={item.feedbackImageUrl} alt="Feedback illustration" className="mt-2 max-h-56 w-full rounded-md bg-black object-contain" />
                 )}
-                {item.feedbackVideoUrl && (
-                  // eslint-disable-next-line jsx-a11y/media-has-caption
-                  <video data-testid={`review-feedback-video-${item.questionId}`} src={item.feedbackVideoUrl} controls className="mt-2 max-h-56 w-full rounded-md bg-black" />
+                {(item.feedbackVideoUrl || item.feedbackVideoUrlB) && (
+                  <div className={`mt-2 grid gap-2 ${item.feedbackVideoUrl && item.feedbackVideoUrlB ? "grid-cols-2" : "grid-cols-1"}`}>
+                    {item.feedbackVideoUrl && (
+                      // eslint-disable-next-line jsx-a11y/media-has-caption
+                      <video data-testid={`review-feedback-video-${item.questionId}`} src={item.feedbackVideoUrl} controls className="max-h-56 w-full rounded-md bg-black" />
+                    )}
+                    {item.feedbackVideoUrlB && (
+                      // eslint-disable-next-line jsx-a11y/media-has-caption
+                      <video data-testid={`review-feedback-video-b-${item.questionId}`} src={item.feedbackVideoUrlB} controls className="max-h-56 w-full rounded-md bg-black" />
+                    )}
+                  </div>
                 )}
               </div>
             </li>

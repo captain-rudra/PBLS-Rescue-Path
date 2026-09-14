@@ -84,7 +84,13 @@ router.post("/", async (request, response) => {
     isCorrect: created.isCorrect,
     partialScore: created.partialScore,
     isRetry: created.isRetry,
-    feedback: { text: question.feedback.text, videoUrl: question.feedback.videoUrl || null, imageUrl: question.feedback.imageUrl || null, ...correctAnswerFor(question) }
+    feedback: {
+      text: question.feedback.text,
+      videoUrl: question.feedback.videoUrl || null,
+      videoUrlB: question.feedback.videoUrlB || null,
+      imageUrl: question.feedback.imageUrl || null,
+      ...correctAnswerFor(question)
+    }
   });
 });
 

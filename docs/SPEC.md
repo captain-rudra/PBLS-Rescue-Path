@@ -205,9 +205,10 @@ pushes options below the fold. On narrow screens the columns stack with media pi
 to the top. Answer locks on selection — no going back.
 
 **Feedback card.** Slides up after every answer, correct or wrong. Carries
-`feedback.text` and, if present, `feedback.videoUrl` as an optional inline player and/or
-`feedback.imageUrl` as an optional illustration (both optional, independent of each
-other — a question can carry neither, either, or both).
+`feedback.text`, plus three independent optional fields: `feedback.videoUrl` as an
+inline player, `feedback.videoUrlB` — a second clip rendered side by side with the
+first (e.g. a wrong-technique/right-technique pair) — and `feedback.imageUrl` as an
+illustration. A question can carry any combination of the three, including none.
 On a wrong answer the chosen card turns coral and the correct card turns green
 simultaneously, both staying visible while the explanation is read. No score
 deduction and no buzzer — the cost is the vitals bar plus another encounter with the

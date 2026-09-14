@@ -3,14 +3,16 @@ import { motion } from "framer-motion";
 import { feedbackCardVariants } from "./motion.js";
 
 // SPEC 2.6: slides up after every answer, carries feedback.text and an
-// optional inline feedback.videoUrl / feedback.imageUrl. No score
-// deduction shown here — the cost already landed on the vitals bar.
+// optional inline feedback.videoUrl (+ an optional second feedback.videoUrlB,
+// shown side by side with it — e.g. a wrong-technique/right-technique pair)
+// and/or feedback.imageUrl. No score deduction shown here — the cost
+// already landed on the vitals bar.
 //
 // The explanation is collapsed behind a toggle by default. From the third
 // remediation round onward (`autoExpand`) it's shown immediately instead —
 // a participant still missing items after two remediation rounds shouldn't
 // be able to skip past the teaching moment.
-export const FeedbackCard = ({ isCorrect, text, videoUrl, imageUrl, onContinue, isLast, autoExpand }) => {
+export const FeedbackCard = ({ isCorrect, text, videoUrl, videoUrlB, imageUrl, onContinue, isLast, autoExpand }) => {
   const [expanded, setExpanded] = useState(Boolean(autoExpand));
 
   return (
@@ -36,9 +38,17 @@ export const FeedbackCard = ({ isCorrect, text, videoUrl, imageUrl, onContinue, 
           <>
             <p data-testid="feedback-text" className="text-[13px] leading-relaxed text-slate-100">{text}</p>
             {imageUrl && <img data-testid="feedback-image" src={imageUrl} alt="Feedback illustration" className="max-h-40 w-full rounded-md object-contain bg-black" />}
-            {videoUrl && (
-              // eslint-disable-next-line jsx-a11y/media-has-caption
-              <video data-testid="feedback-video" src={videoUrl} controls className="max-h-40 w-full rounded-md bg-black" />
+            {(videoUrl || videoUrlB) && (
+              <div className={`grid gap-2 ${videoUrl && videoUrlB ? "grid-cols-2" : "grid-cols-1"}`}>
+                {videoUrl && (
+                  // eslint-disable-next-line jsx-a11y/media-has-caption
+                  <video data-testid="feedback-video" src={videoUrl} controls className="max-h-40 w-full rounded-md bg-black" />
+                )}
+                {videoUrlB && (
+                  // eslint-disable-next-line jsx-a11y/media-has-caption
+                  <video data-testid="feedback-video-b" src={videoUrlB} controls className="max-h-40 w-full rounded-md bg-black" />
+                )}
+              </div>
             )}
           </>
         ) : (

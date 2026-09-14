@@ -52,7 +52,14 @@ export const QuestionPreview = ({ form, onClose }) => {
 
   const onCommit = given => {
     const scored = scoreLocally(form, given);
-    setResult({ given, ...scored, text: form.feedback.text, videoUrl: form.feedback.videoUrl || null, imageUrl: form.feedback.imageUrl || null });
+    setResult({
+      given,
+      ...scored,
+      text: form.feedback.text,
+      videoUrl: form.feedback.videoUrl || null,
+      videoUrlB: form.feedback.videoUrlB || null,
+      imageUrl: form.feedback.imageUrl || null
+    });
     return Promise.resolve({ isCorrect: scored.isCorrect, partialScore: 0, feedback: { text: form.feedback.text } });
   };
 
@@ -85,9 +92,17 @@ export const QuestionPreview = ({ form, onClose }) => {
             {form.feedback.imageUrl && (
               <img data-testid="preview-feedback-image" src={form.feedback.imageUrl} alt="Feedback illustration" className="mt-2 max-h-56 w-full rounded-md bg-black object-contain" />
             )}
-            {form.feedback.videoUrl && (
-              // eslint-disable-next-line jsx-a11y/media-has-caption
-              <video data-testid="preview-feedback-video" src={form.feedback.videoUrl} controls className="mt-2 max-h-56 w-full rounded-md bg-black" />
+            {(form.feedback.videoUrl || form.feedback.videoUrlB) && (
+              <div className={`mt-2 grid gap-2 ${form.feedback.videoUrl && form.feedback.videoUrlB ? "grid-cols-2" : "grid-cols-1"}`}>
+                {form.feedback.videoUrl && (
+                  // eslint-disable-next-line jsx-a11y/media-has-caption
+                  <video data-testid="preview-feedback-video" src={form.feedback.videoUrl} controls className="max-h-56 w-full rounded-md bg-black" />
+                )}
+                {form.feedback.videoUrlB && (
+                  // eslint-disable-next-line jsx-a11y/media-has-caption
+                  <video data-testid="preview-feedback-video-b" src={form.feedback.videoUrlB} controls className="max-h-56 w-full rounded-md bg-black" />
+                )}
+              </div>
             )}
           </div>
         )}
