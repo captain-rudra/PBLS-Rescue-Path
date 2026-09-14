@@ -32,6 +32,7 @@ const emptyForm = (levelKey = "") => ({
   options: [{ key: "A", text: "" }, { key: "B", text: "" }],
   correct: "",
   items: [],
+  correctOrder: [],
   buckets: [],
   hotspots: [],
   sides: [{ label: "Side A", parameters: [] }, { label: "Side B", parameters: [] }]
@@ -61,6 +62,7 @@ const questionToForm = q => ({
   options: q.options?.length ? q.options : [{ key: "A", text: "" }, { key: "B", text: "" }],
   correct: q.correct || "",
   items: q.items || [],
+  correctOrder: q.correctOrder || [],
   buckets: q.buckets || [],
   hotspots: q.hotspots || [],
   sides: q.sides?.length ? q.sides : [{ label: "Side A", parameters: [] }, { label: "Side B", parameters: [] }]
