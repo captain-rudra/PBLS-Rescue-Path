@@ -49,7 +49,7 @@ const records = { session: null, level: null, participantIds: [], attemptIds: []
 // Participant-management fixture (SPEC 6): a scratch session, ten
 // generated codes with roster labels, and a scratch attempt so the "no
 // label reaches any export" check has real rows to scan.
-const people = { session: null, level: null, participantCodePrefix: "E2EPM", attemptIds: [], questionId: null, labels: [] };
+const people = { session: null, level: null, participantCodePrefix: "E2EPM", attemptIds: [], questionId: null, labels: [], defaultSessionId: null };
 
 const request = async (method, path, body, { token } = {}) => {
   const headers = { "Content-Type": "application/json" };
@@ -131,6 +131,7 @@ const teardown = async () => {
   if (people.questionId) await Question.deleteOne({ _id: people.questionId });
   if (people.level) await Level.deleteOne({ _id: people.level._id });
   if (people.session) await Session.deleteOne({ _id: people.session._id });
+  if (people.defaultSessionId) await Session.deleteOne({ _id: people.defaultSessionId });
 
   await disconnectDB();
 };
@@ -961,6 +962,51 @@ const testParticipantManagement = async () => {
   const noSession = await request("POST", "/admin/participants/generate", { prefix: "E2EPM", arm: "C", count: 1, labels: ["orphan"] }, { token: superToken });
   assert.equal(noSession.status, 400, "roster labels without a session must be refused");
   assert.equal(noSession.body.error.code, "LABELS_NEED_SESSION");
+
+  // --- No session, no labels: auto-attached to a standing open session ---
+  // Otherwise the code sits at sessionId: null forever (no session-control
+  // UI exists yet to fix it after the fact) and POST /play/attempts refuses
+  // it with NO_SESSION on the very first sign-in.
+  // The default session is meant to be a real, persistent, reused fixture
+  // (that's the whole point of the fix) — so only clean it up in teardown
+  // if THIS run is the one that minted it; never delete one that already
+  // existed, since that could be a real standing session from actual use.
+  const preExistingDefault = await Session.findOne({ isSystemDefault: true, deletedAt: null, status: { $ne: "ended" } }).lean();
+
+  const autoGen = await request("POST", "/admin/participants/generate", { prefix: "E2EPM", arm: "E", count: 2 }, { token: superToken });
+  assert.equal(autoGen.status, 201, JSON.stringify(autoGen.body));
+  assert.ok(autoGen.body.sessionId, "a session id is returned even though none was requested");
+  assert.equal(autoGen.body.sessionAutoAttached, true);
+  if (!preExistingDefault) people.defaultSessionId = autoGen.body.sessionId;
+
+  const autoParticipants = await Participant.find({ code: { $in: autoGen.body.participants.map(p => p.code) } }).lean();
+  assert.ok(
+    autoParticipants.every(p => String(p.sessionId) === autoGen.body.sessionId),
+    "every auto-generated participant is attached to the default session, not left at null"
+  );
+  const defaultSessionDoc = await Session.findById(autoGen.body.sessionId).lean();
+  assert.equal(defaultSessionDoc.mode, "open");
+  assert.equal(defaultSessionDoc.isSystemDefault, true, "the fallback session is flagged so it's never confused with an admin-created open session");
+  assert.equal(
+    defaultSessionDoc.roster.filter(r => autoParticipants.some(p => String(p._id) === String(r.participantId))).length,
+    0,
+    "auto-attach must never add a roster entry — that's reserved for an explicitly chosen session (SPEC 6.2)"
+  );
+
+  // Prove the root cause is actually fixed: a freshly auto-attached code
+  // must clear the sessionId gate on /play/attempts (an unrelated 404 for
+  // the bogus levelKey proves the NO_SESSION check was passed, not skipped).
+  const autoJti = newJti();
+  await Participant.updateOne({ _id: autoParticipants[0]._id }, { $set: { activeJti: autoJti } });
+  const autoToken = signParticipantToken({ participantId: autoParticipants[0]._id, sessionId: autoParticipants[0].sessionId, jti: autoJti });
+  const firstAttemptCall = await request("POST", "/play/attempts", { levelKey: "no-such-level-e2e-autogen" }, { token: autoToken });
+  assert.notEqual(firstAttemptCall.body?.error?.code, "NO_SESSION", "an auto-attached participant must not hit NO_SESSION");
+  assert.equal(firstAttemptCall.status, 404, "unknown levelKey reaches the normal LEVEL_NOT_FOUND check, proving the session gate passed");
+
+  // Calling generate again with still no session must reuse the SAME
+  // standing session rather than minting a new one every time.
+  const autoGenAgain = await request("POST", "/admin/participants/generate", { prefix: "E2EPM", arm: "C", count: 1 }, { token: superToken });
+  assert.equal(autoGenAgain.body.sessionId, autoGen.body.sessionId, "the default open session is found and reused, not recreated, on a second call");
 
   // --- List: filterable by session and arm ---------------------------
   const list = await request("GET", `/admin/participants?sessionId=${people.session._id}`, undefined, { token: superToken });

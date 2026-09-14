@@ -18,6 +18,11 @@ const sessionSchema = new mongoose.Schema({
   roster: [rosterSchema],
   blocklist: [{ type: mongoose.Schema.Types.ObjectId, ref: "Participant" }],
   instrumentVersion: { type: Number, required: true, default: 1 },
+  // True only for the single standing session that POST /admin/participants
+  // /generate falls back to when no sessionId is given (see that route).
+  // Never set by an admin — an admin-created session, even one they happen
+  // to make mode: "open", must NOT be mistaken for this system fallback.
+  isSystemDefault: { type: Boolean, default: false },
   deletedAt: { type: Date, default: null }
 }, { timestamps: true, collection: "sessions" });
 

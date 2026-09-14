@@ -92,7 +92,7 @@ const GeneratePanel = ({ sessions, onGenerated }) => {
         labels: usingLabels ? labelLines : undefined
       });
       setLabelsText("");
-      onGenerated(res, { sessionId: sessionId || null, arm });
+      onGenerated(res, { sessionId: res.sessionId, arm });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -136,7 +136,7 @@ const GeneratePanel = ({ sessions, onGenerated }) => {
         <label className="flex flex-col gap-1">
           <span className="font-semibold uppercase tracking-wide text-slate-500">Session (optional)</span>
           <select data-testid="gen-session" value={sessionId} onChange={e => setSessionId(e.target.value)} className="rounded border border-[#3A4A63]/40 bg-white px-1.5 py-1">
-            <option value="">None — codes only</option>
+            <option value="">None — auto-attached to the standing open session</option>
             {sessions.map(s => (
               <option key={s.sessionId} value={s.sessionId}>
                 {s.mode} · {s.status} · {new Date(s.createdAt).toISOString().slice(0, 10)}
@@ -368,14 +368,18 @@ export const PeoplePage = () => {
       .catch(e => setError(e.message));
   }, [filters]);
 
-  useEffect(() => {
+  const loadSessions = useCallback(() => {
     getSessions()
       .then(res => setSessions(res.sessions))
       .catch(() => setSessions([]));
+  }, []);
+
+  useEffect(() => {
+    loadSessions();
     getMe()
       .then(res => setAdmin(res.admin))
       .catch(() => {});
-  }, []);
+  }, [loadSessions]);
 
   useEffect(() => {
     load();
@@ -385,8 +389,12 @@ export const PeoplePage = () => {
     const withLabels = res.participants.filter(p => p.label).length;
     setNotice(
       `Generated ${res.participants.length} code${res.participants.length === 1 ? "" : "s"} (${res.prefix}-${res.participants[0].arm}-…)` +
-        (withLabels ? `, ${withLabels} with a roster label on the session` : "")
+        (withLabels ? `, ${withLabels} with a roster label on the session` : "") +
+        (res.sessionAutoAttached ? " — attached to the standing open session" : "")
     );
+    // A generate call can lazily create the standing default open session
+    // for the first time — refresh the dropdown so it's selectable/visible.
+    if (res.sessionAutoAttached) loadSessions();
     // Jump the filters to the freshly generated cohort so the new rows are in view.
     setFilters({ sessionId: ctx.sessionId, arm: ctx.arm });
   };

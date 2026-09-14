@@ -2,6 +2,7 @@ import { Router } from "express";
 import mongoose from "mongoose";
 import Participant from "../../models/Participant.js";
 import Session from "../../models/Session.js";
+import Level from "../../models/Level.js";
 import { sendError } from "../../lib/httpError.js";
 import { writeAuditLog } from "../../services/audit.js";
 import { requireSuperAdmin } from "../../middleware/requireSuperAdmin.js";
@@ -122,12 +123,37 @@ router.get("/slips", async (request, response) => {
   });
 });
 
+// A code generated with no explicit sessionId would otherwise sit at
+// sessionId: null forever — there is no session-control UI yet (Phase 2,
+// SPEC 6.1 "no session control yet") to attach one after the fact, and
+// POST /play/attempts hard-requires a sessionId before any attempt can be
+// created. Rather than leave every open-mode code unplayable until Phase 2
+// ships, fall back to one standing "open" session covering every published
+// level — created once and reused after that. This is exactly the case
+// CLAUDE.md already carves out: "the study can be run entirely in open
+// mode; the control room is an improvement, not a prerequisite."
+const findOrCreateDefaultOpenSession = async () => {
+  const existing = await Session.findOne({ isSystemDefault: true, deletedAt: null, status: { $ne: "ended" } }).sort({ createdAt: -1 });
+  if (existing) return existing;
+  const levels = await Level.find({ deletedAt: null }, { key: 1 }).lean();
+  return Session.create({
+    mode: "open",
+    capacity: 40, // Session's own schema caps capacity at 40 — MAX_BATCH (500) would fail validation
+    levelKeys: levels.length ? levels.map(l => l.key) : ["prelevel"],
+    status: "running",
+    startedAt: new Date(),
+    isSystemDefault: true
+  });
+};
+
 // --- Bulk code generation (SPEC 6.1) -------------------------------
 // `prefix` (default "PBLS") + arm + running number => e.g. PBLS-E-047.
 // `sessionId` attaches the fresh codes to an existing session's roster;
 // a roster label (SPEC 6.2) is written onto the roster entry ONLY, never
 // the participant document, and (per SPEC 6.2) never reaches an export.
-// This route does not create, configure or start a session.
+// This route does not create, configure or start a controlled session —
+// but when no sessionId is given (and no labels), it falls back to a
+// standing default open session so the codes are playable immediately.
 router.post("/generate", async (request, response) => {
   const { arm, count, sessionId, labels } = request.body || {};
   const prefix = (request.body?.prefix ?? DEFAULT_PREFIX).toUpperCase();
@@ -150,8 +176,16 @@ router.post("/generate", async (request, response) => {
     return sendError(response, 400, "LABELS_NEED_SESSION", "roster labels can only be attached when a sessionId is given — they live on the session roster, not the participant");
   }
 
+  // Only an EXPLICITLY chosen session gets a roster entry (and, per SPEC
+  // 6.2, ever gets a label) — the default open-mode fallback below is a
+  // playability safety net, not an invite, so it stays off the roster.
+  const explicitSession = session;
+  if (!session) {
+    session = await findOrCreateDefaultOpenSession();
+  }
+
   const codes = await nextCodes(prefix, arm, count);
-  const docs = codes.map(code => ({ code, arm, sessionId: session ? session._id : null }));
+  const docs = codes.map(code => ({ code, arm, sessionId: session._id }));
 
   let created;
   try {
@@ -161,11 +195,11 @@ router.post("/generate", async (request, response) => {
     throw error;
   }
 
-  if (session) {
+  if (explicitSession) {
     for (const [index, participant] of created.entries()) {
-      session.roster.push({ participantId: participant._id, label: labels?.[index] || undefined, state: "invited" });
+      explicitSession.roster.push({ participantId: participant._id, label: labels?.[index] || undefined, state: "invited" });
     }
-    await session.save();
+    await explicitSession.save();
   }
 
   await Promise.all(
@@ -183,6 +217,8 @@ router.post("/generate", async (request, response) => {
 
   response.status(201).json({
     prefix,
+    sessionId: String(session._id),
+    sessionAutoAttached: !explicitSession,
     participants: created.map((participant, index) => ({
       participantId: String(participant._id),
       code: participant.code,
