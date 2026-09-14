@@ -3,14 +3,14 @@ import { motion } from "framer-motion";
 import { feedbackCardVariants } from "./motion.js";
 
 // SPEC 2.6: slides up after every answer, carries feedback.text and an
-// optional inline feedback.videoUrl. No score deduction shown here — the
-// cost already landed on the vitals bar.
+// optional inline feedback.videoUrl / feedback.imageUrl. No score
+// deduction shown here — the cost already landed on the vitals bar.
 //
 // The explanation is collapsed behind a toggle by default. From the third
 // remediation round onward (`autoExpand`) it's shown immediately instead —
 // a participant still missing items after two remediation rounds shouldn't
 // be able to skip past the teaching moment.
-export const FeedbackCard = ({ isCorrect, text, videoUrl, onContinue, isLast, autoExpand }) => {
+export const FeedbackCard = ({ isCorrect, text, videoUrl, imageUrl, onContinue, isLast, autoExpand }) => {
   const [expanded, setExpanded] = useState(Boolean(autoExpand));
 
   return (
@@ -35,6 +35,7 @@ export const FeedbackCard = ({ isCorrect, text, videoUrl, onContinue, isLast, au
         {expanded ? (
           <>
             <p data-testid="feedback-text" className="text-[13px] leading-relaxed text-slate-100">{text}</p>
+            {imageUrl && <img data-testid="feedback-image" src={imageUrl} alt="Feedback illustration" className="max-h-40 w-full rounded-md object-contain bg-black" />}
             {videoUrl && (
               // eslint-disable-next-line jsx-a11y/media-has-caption
               <video data-testid="feedback-video" src={videoUrl} controls className="max-h-40 w-full rounded-md bg-black" />

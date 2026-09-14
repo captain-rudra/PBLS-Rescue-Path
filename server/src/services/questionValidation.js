@@ -203,7 +203,7 @@ export const sanitizeQuestionForType = input => {
     scenario: input.scenario ? input.scenario.trim() : null,
     prompt: (input.prompt || "").trim(),
     points: Number(input.points),
-    feedback: { text: (input.feedback?.text || "").trim(), videoUrl: input.feedback?.videoUrl || null },
+    feedback: { text: (input.feedback?.text || "").trim(), videoUrl: input.feedback?.videoUrl || null, imageUrl: input.feedback?.imageUrl || null },
     authoringNote: input.authoringNote || null
   };
 

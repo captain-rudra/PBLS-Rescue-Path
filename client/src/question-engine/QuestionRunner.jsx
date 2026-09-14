@@ -79,6 +79,7 @@ export const QuestionRunner = ({ attemptId, question, onAnswered, onContinue, is
             isCorrect={result.isCorrect}
             text={result.text}
             videoUrl={result.videoUrl}
+            imageUrl={result.imageUrl}
             isLast={isLast}
             onContinue={onContinue}
             autoExpand={autoExpandFeedback}

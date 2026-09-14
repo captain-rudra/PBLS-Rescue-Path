@@ -356,7 +356,8 @@ router.get("/:id/review", async (request, response) => {
       isCorrect: answered ? answered.isCorrect : null,
       correct: correctAnswerFor(question),
       feedbackText: question.feedback.text,
-      feedbackVideoUrl: question.feedback.videoUrl || null
+      feedbackVideoUrl: question.feedback.videoUrl || null,
+      feedbackImageUrl: question.feedback.imageUrl || null
     };
   });
 

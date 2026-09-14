@@ -378,6 +378,9 @@ export const LevelReview = () => {
               <div className="mt-3 rounded-md bg-[#1E3050]/5 px-3 py-2">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Feedback</p>
                 <p className="mt-0.5 text-[12px] leading-relaxed text-[#16243D]">{item.feedbackText}</p>
+                {item.feedbackImageUrl && (
+                  <img data-testid={`review-feedback-image-${item.questionId}`} src={item.feedbackImageUrl} alt="Feedback illustration" className="mt-2 max-h-56 w-full rounded-md bg-black object-contain" />
+                )}
                 {item.feedbackVideoUrl && (
                   // eslint-disable-next-line jsx-a11y/media-has-caption
                   <video data-testid={`review-feedback-video-${item.questionId}`} src={item.feedbackVideoUrl} controls className="mt-2 max-h-56 w-full rounded-md bg-black" />
