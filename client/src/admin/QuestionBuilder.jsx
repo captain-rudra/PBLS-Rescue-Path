@@ -28,7 +28,7 @@ const emptyForm = (levelKey = "") => ({
   feedback: { text: "", videoUrl: "", videoUrlB: "", imageUrl: "" },
   authoringNote: "",
   fallbackText: "",
-  media: { videoUrl: "", videoUrlB: "", posterUrl: "", riveSrc: "", loop: true, gateOnFirstPlay: false, sharedScrub: true, durationSeconds: "" },
+  media: { videoUrl: "", videoUrlB: "", posterUrl: "", riveSrc: "", loop: true, gateOnFirstPlay: false, durationSeconds: "" },
   options: [{ key: "A", text: "" }, { key: "B", text: "" }],
   correct: "",
   items: [],
@@ -56,7 +56,6 @@ const questionToForm = q => ({
     riveSrc: q.media?.riveSrc || "",
     loop: q.media?.loop ?? true,
     gateOnFirstPlay: q.media?.gateOnFirstPlay ?? false,
-    sharedScrub: q.media?.sharedScrub ?? true,
     durationSeconds: q.media?.durationSeconds ?? ""
   },
   options: q.options?.length ? q.options : [{ key: "A", text: "" }, { key: "B", text: "" }],
@@ -139,10 +138,7 @@ const MediaFieldsEditor = ({ form, setForm }) => {
           <LabeledInput label="Video URL (side A)" value={form.media.videoUrl} onChange={v => set("videoUrl", v)} />
           <LabeledInput label="Video URL (side B)" value={form.media.videoUrlB} onChange={v => set("videoUrlB", v)} />
           <LabeledInput label="Poster URL" value={form.media.posterUrl} onChange={v => set("posterUrl", v)} />
-          <label className="flex items-center gap-2 text-[12px]">
-            <input type="checkbox" checked={form.media.sharedScrub} onChange={e => set("sharedScrub", e.target.checked)} />
-            Shared scrub bar
-          </label>
+          <p className="text-[11px] text-slate-500">Each side plays independently with its own controls. Both must be watched through once before the answer options unlock.</p>
         </>
       )}
       <LabeledInput label="Fallback text (shown if media fails or is missing)" value={form.fallbackText} onChange={v => setForm(f => ({ ...f, fallbackText: v }))} textarea />

@@ -6,7 +6,7 @@ const optionSchema = new mongoose.Schema({ key: { type: String, required: true }
 // ("each hotspot window falls inside the clip duration") has nothing to
 // check against without it. Nothing else reads or requires it.
 const mediaSchema = new mongoose.Schema(
-  { videoUrl: String, videoUrlB: String, posterUrl: String, riveSrc: String, loop: Boolean, gateOnFirstPlay: Boolean, sharedScrub: Boolean, durationSeconds: Number },
+  { videoUrl: String, videoUrlB: String, posterUrl: String, riveSrc: String, loop: Boolean, gateOnFirstPlay: Boolean, durationSeconds: Number },
   { _id: false }
 );
 const feedbackSchema = new mongoose.Schema({ text: { type: String, required: true, trim: true }, videoUrl: String, videoUrlB: String, imageUrl: String }, { _id: false });

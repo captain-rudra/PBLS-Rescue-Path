@@ -198,7 +198,7 @@ const DRAFTS_BY_TYPE = {
     points: 100,
     options: [{ key: "A", text: "Rescuer A" }, { key: "B", text: "Rescuer B" }],
     correct: "B",
-    media: { videoUrl: "https://example.test/a.mp4", videoUrlB: "https://example.test/b.mp4", sharedScrub: true },
+    media: { videoUrl: "https://example.test/a.mp4", videoUrlB: "https://example.test/b.mp4" },
     sides: [{ label: "Rescuer A", parameters: ["too slow"] }, { label: "Rescuer B", parameters: ["correct rate"] }],
     fallbackText: "A is too slow, B is correct.",
     feedback: { text: "B is correct." }

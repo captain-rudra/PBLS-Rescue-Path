@@ -6,15 +6,15 @@ import { OPTION_BASED_TYPES } from "./scoring.js";
 import { HttpError } from "../lib/httpError.js";
 
 // Every media sub-field a type's builder form shows. Boolean flags
-// (loop, gateOnFirstPlay, sharedScrub) are included here for the builder's
-// benefit but are never "assets" for the bank's media-state column below.
+// (loop, gateOnFirstPlay) are included here for the builder's benefit but
+// are never "assets" for the bank's media-state column below.
 export const MEDIA_FIELDS_BY_TYPE = Object.freeze({
   mcq: [],
   video_mcq: ["videoUrl", "posterUrl", "gateOnFirstPlay"],
   animation_mcq: ["riveSrc", "loop"],
   drag_drop: [],
   sequence: [],
-  split_screen: ["videoUrl", "videoUrlB", "posterUrl", "sharedScrub"],
+  split_screen: ["videoUrl", "videoUrlB", "posterUrl"],
   hotspot_video: ["videoUrl", "posterUrl", "gateOnFirstPlay", "durationSeconds"]
 });
 
@@ -157,15 +157,17 @@ const TYPE_FIELD_BUILDERS = Object.freeze({
   }),
   // Video sources live on media.videoUrl/videoUrlB (one clip per side),
   // NOT sides[].videoUrl — sides[] carries only the label and the
-  // fallback parameter list (SPEC 3.4's "doubles as the fallback").
+  // fallback parameter list (SPEC 3.4's "doubles as the fallback"). Both
+  // sides play independently and both must be watched through once
+  // before the options unlock (SPEC 3.4) — there is no opt-out flag for
+  // this, unlike gateOnFirstPlay on a single video_mcq clip.
   split_screen: input => ({
     options: sanitizeOptions(input.options),
     correct: input.correct || null,
     media: {
       videoUrl: input.media?.videoUrl || null,
       videoUrlB: input.media?.videoUrlB || null,
-      posterUrl: input.media?.posterUrl || null,
-      sharedScrub: Boolean(input.media?.sharedScrub)
+      posterUrl: input.media?.posterUrl || null
     },
     sides: (input.sides || []).map(s => ({ label: s.label, parameters: s.parameters || [] })),
     fallbackText: input.fallbackText || null

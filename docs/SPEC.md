@@ -336,7 +336,7 @@ type are validated and rendered.
 | `animation_mcq` | Looping Rive scene, no gate, options live immediately |
 | `drag_drop` | Token tray plus labelled buckets |
 | `sequence` | Draggable ordered rows |
-| `split_screen` | Two synchronised players, one shared scrub bar |
+| `split_screen` | Two independent players, both mandatory before answering |
 | `hotspot_video` | Single player with a timed hotspot overlay, plus a fallback option list |
 
 ### 3.1 Gating
@@ -366,9 +366,19 @@ draggable, so feedback is positional rather than a bare pass or fail.
 
 ### 3.4 Split screen
 
-One scrub bar drives both players so the learner always compares the same moment. The
-`sides[].parameters` list under each clip is drawn from the source document verbatim
-and doubles as the fallback, so the item works even if the video fails to load.
+Each side is an independent player with its own controls — no shared scrub, no
+synchronised playback. Both clips must be watched through once before the options
+unlock, the same mandatory-viewing principle as `gateOnFirstPlay` (3.1) applied to two
+clips instead of one; there is no opt-out flag for it. A side that fails to load, or
+has no clip at all, counts as already watched — the `sides[].parameters` list under
+that clip is drawn from the source document verbatim and doubles as the fallback, so
+the item still works and still unlocks.
+
+This was previously one scrub bar driving both players in lock-step, so the learner
+could compare the same moment side by side. That comparison is the trade-off of moving
+to two independent, mandatory-to-complete players — worth knowing if a future item
+genuinely depends on "the same instant on both sides" rather than "both sides fully
+watched."
 
 ### 3.5 Hotspot video
 
