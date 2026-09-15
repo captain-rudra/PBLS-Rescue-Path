@@ -120,12 +120,19 @@ single-server state, not built to coordinate across replicas:
 
 ## 3. Client
 
-A `vercel.json` is committed at the repo root for deploying the client on
-Vercel from this monorepo: it runs `npm ci` + `npm run build --workspace
-client`, serves `client/dist`, and rewrites every path to `index.html` for
-the client-side router. Set `VITE_API_BASE_URL` as a Vercel project env var
-(Production scope) to the Render API's URL — Vercel runs the build command
-above itself, so this still applies at build time as described below.
+`client/vercel.json` handles the client-side router's rewrite (every path
+falls back to `index.html`). Point Vercel's **Root Directory** at `client`
+(not the repo root) when importing the project — `client/package.json` is
+self-contained (`npm run build` there is plain `vite build`, no workspace
+flag needed), and the shared `../../../shared/constants.js` import still
+resolves at build time since Vercel checks out the whole repo regardless
+of which directory Root Directory points at; only the install/build
+commands' working directory changes. Leave Build/Install/Output Directory
+on their framework defaults (Vite preset: `npm install`, `vite build`,
+`dist`) — don't hand-type a `--workspace` command, it only makes sense run
+from the repo root, not from inside `client/`. Set `VITE_API_BASE_URL` as a
+Vercel project env var (Production scope) to the Render API's URL — Vite
+only reads it at build time, so this still applies as described below.
 
 ### Build
 
