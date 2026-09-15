@@ -53,11 +53,11 @@ export const FeedbackCard = ({ isCorrect, text, videoUrl, videoUrlB, imageUrl, o
               <div className={`grid gap-2 ${videoUrl && videoUrlB ? "grid-cols-2" : "grid-cols-1"}`}>
                 {videoUrl && (
                   // eslint-disable-next-line jsx-a11y/media-has-caption
-                  <video data-testid="feedback-video" src={videoUrl} controls className="max-h-40 w-full rounded-md bg-black" {...gate.handlersFor(videoUrl)} />
+                  <video data-testid="feedback-video" src={videoUrl} controls playsInline className="max-h-40 w-full rounded-md bg-black" {...gate.handlersFor(videoUrl)} />
                 )}
                 {videoUrlB && (
                   // eslint-disable-next-line jsx-a11y/media-has-caption
-                  <video data-testid="feedback-video-b" src={videoUrlB} controls className="max-h-40 w-full rounded-md bg-black" {...gate.handlersFor(videoUrlB)} />
+                  <video data-testid="feedback-video-b" src={videoUrlB} controls playsInline className="max-h-40 w-full rounded-md bg-black" {...gate.handlersFor(videoUrlB)} />
                 )}
               </div>
             )}

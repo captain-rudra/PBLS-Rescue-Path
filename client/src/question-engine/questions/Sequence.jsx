@@ -14,7 +14,7 @@ const Row = ({ id, text, index, locked, tone }) => {
       {...attributes}
       {...listeners}
       data-testid={`row-${id}`}
-      className={`flex items-center gap-2 rounded-md border px-3 py-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-[#34D399] ${tone} ${
+      className={`touch-none select-none flex items-center gap-2 rounded-md border px-3 py-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-[#34D399] ${tone} ${
         isDragging ? "opacity-60" : ""
       } ${locked ? "cursor-default" : "cursor-grab"}`}
     >

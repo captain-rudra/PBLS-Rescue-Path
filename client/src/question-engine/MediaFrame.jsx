@@ -21,6 +21,7 @@ export const MediaFrame = forwardRef(({ media, fallbackText, gate, onInteract, c
         src={media.videoUrl}
         poster={posterOverride ?? media.posterUrl ?? undefined}
         controls
+        playsInline
         className="max-h-72 w-full"
         onPlay={() => {
           onInteract?.();

@@ -159,7 +159,7 @@ const ReviewMedia = ({ item }) => {
             <div key={side.label || index} className="overflow-hidden rounded-lg bg-black">
               <p className="bg-black/60 px-2 py-1 text-[11px] text-white">{side.label}</p>
               {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-              <video src={side.videoUrl} controls className="max-h-56 w-full" />
+              <video src={side.videoUrl} controls playsInline className="max-h-56 w-full" />
             </div>
           ) : (
             <div key={side.label || index} className="rounded-lg border border-dashed border-[#3A4A63] bg-[#1E3050] p-3">
@@ -188,7 +188,7 @@ const ReviewMedia = ({ item }) => {
     return (
       <div className="mt-3 overflow-hidden rounded-lg bg-black">
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video src={media.videoUrl} poster={media.posterUrl || undefined} controls className="max-h-72 w-full" />
+        <video src={media.videoUrl} poster={media.posterUrl || undefined} controls playsInline className="max-h-72 w-full" />
       </div>
     );
   }
@@ -403,11 +403,11 @@ export const LevelReview = () => {
                   <div className={`mt-2 grid gap-2 ${item.feedbackVideoUrl && item.feedbackVideoUrlB ? "grid-cols-2" : "grid-cols-1"}`}>
                     {item.feedbackVideoUrl && (
                       // eslint-disable-next-line jsx-a11y/media-has-caption
-                      <video data-testid={`review-feedback-video-${item.questionId}`} src={item.feedbackVideoUrl} controls className="max-h-56 w-full rounded-md bg-black" />
+                      <video data-testid={`review-feedback-video-${item.questionId}`} src={item.feedbackVideoUrl} controls playsInline className="max-h-56 w-full rounded-md bg-black" />
                     )}
                     {item.feedbackVideoUrlB && (
                       // eslint-disable-next-line jsx-a11y/media-has-caption
-                      <video data-testid={`review-feedback-video-b-${item.questionId}`} src={item.feedbackVideoUrlB} controls className="max-h-56 w-full rounded-md bg-black" />
+                      <video data-testid={`review-feedback-video-b-${item.questionId}`} src={item.feedbackVideoUrlB} controls playsInline className="max-h-56 w-full rounded-md bg-black" />
                     )}
                   </div>
                 )}

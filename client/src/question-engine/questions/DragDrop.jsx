@@ -14,7 +14,7 @@ const Token = ({ id, text, disabled }) => {
       {...attributes}
       type="button"
       data-testid={`token-${id}`}
-      className={`rounded-md border border-[#3A4A63] bg-[#1E3050] px-3 py-2 text-[12px] text-[#FFF7ED] shadow-sm focus:outline-none focus:ring-2 focus:ring-[#34D399] ${
+      className={`touch-none select-none rounded-md border border-[#3A4A63] bg-[#1E3050] px-3 py-2 text-[12px] text-[#FFF7ED] shadow-sm focus:outline-none focus:ring-2 focus:ring-[#34D399] ${
         isDragging ? "opacity-50" : ""
       } ${disabled ? "cursor-default opacity-70" : "cursor-grab"}`}
     >

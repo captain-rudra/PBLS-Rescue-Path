@@ -147,7 +147,7 @@ export const SignIn = () => {
                 value={code}
                 onChange={event => setCode(event.target.value.toUpperCase())}
                 placeholder={CODE_FORMAT_HINT}
-                className="rounded-md border border-[#3A4A63]/40 bg-white px-3 py-2 text-[15px] font-normal normal-case text-[#16243D] tracking-widest focus:border-[#34D399] focus:outline-none"
+                className="rounded-md border border-[#3A4A63]/40 bg-white px-3 py-2 text-[16px] font-normal normal-case text-[#16243D] tracking-widest focus:border-[#34D399] focus:outline-none"
               />
             </label>
             <button
