@@ -29,9 +29,13 @@ export const loginAdmin = (email, password) => coreFetch("/auth/admin/login", { 
 
 export const getMe = () => coreFetch("/auth/me", { method: "GET" });
 
-export const getLevels = () => request("GET", "/levels");
+export const getLevels = ({ includeDeleted } = {}) => request("GET", `/levels${includeDeleted ? "?includeDeleted=true" : ""}`);
 export const lockLevel = (levelId, reason) => request("POST", `/levels/${levelId}/lock`, { reason });
 export const unlockLevel = (levelId, reason) => request("POST", `/levels/${levelId}/unlock`, { reason });
+// Soft delete (sets deletedAt — CLAUDE.md rule 5, never a real removal).
+export const deleteLevel = (levelId, reason) => request("DELETE", `/levels/${levelId}`, { reason });
+// Irreversible — only succeeds once already soft-deleted AND never played.
+export const hardDeleteLevel = (levelId, reason) => request("DELETE", `/levels/${levelId}/permanent`, { reason });
 
 export const getQuestions = (filters = {}) => {
   const params = new URLSearchParams(Object.entries(filters).filter(([, v]) => v));
@@ -42,6 +46,8 @@ export const getQuestion = id => request("GET", `/questions/${id}`);
 export const createQuestion = payload => request("POST", "/questions", payload);
 export const updateQuestion = (id, payload) => request("PATCH", `/questions/${id}`, payload);
 export const archiveQuestion = (id, reason) => request("DELETE", `/questions/${id}`, { reason });
+// Irreversible — only succeeds once already archived AND never served to a real attempt.
+export const hardDeleteQuestion = (id, reason) => request("DELETE", `/questions/${id}/permanent`, { reason });
 export const reorderQuestions = (levelKey, orderedQuestionIds, reason) => request("POST", "/questions/reorder", { levelKey, orderedQuestionIds, reason });
 
 // --- Records and analytics (SPEC §11) ---------------------------------
@@ -58,11 +64,12 @@ const scopeQuery = scope => {
 export const getSessions = () => request("GET", "/sessions");
 
 // --- Participant management (SPEC 6) ---------------------------------
-const participantQuery = ({ sessionId, arm, ids } = {}) => {
+const participantQuery = ({ sessionId, arm, ids, includeDeleted } = {}) => {
   const params = new URLSearchParams();
   if (sessionId) params.set("sessionId", sessionId);
   if (arm) params.set("arm", arm);
   if (ids && ids.length) params.set("ids", Array.isArray(ids) ? ids.join(",") : ids);
+  if (includeDeleted) params.set("includeDeleted", "true");
   const q = params.toString();
   return q ? `?${q}` : "";
 };
@@ -81,6 +88,10 @@ export const updateParticipant = (id, patch) => request("PATCH", `/participants/
 export const getSlips = (filters = {}) => request("GET", `/participants/slips${participantQuery(filters)}`);
 // Soft delete (sets deletedAt — CLAUDE.md rule 5, never a real removal).
 export const deleteParticipant = (id, reason) => request("DELETE", `/participants/${id}`, { reason });
+// Irreversible — only succeeds once already soft-deleted AND never played.
+export const hardDeleteParticipant = (id, reason) => request("DELETE", `/participants/${id}/permanent`, { reason });
+// Never touches an existing Attempt/Response — see the server route's comment.
+export const resetParticipantLevel = (id, levelId, reason) => request("POST", `/participants/${id}/reset-level`, { levelId, reason });
 export const getRecordsParticipants = (scope = {}) => request("GET", `/records/participants${scopeQuery(scope)}`);
 export const getItemAnalysis = (scope = {}) => request("GET", `/records/items${scopeQuery(scope)}`);
 export const getRecordsTrail = (participantId, levelKey) =>

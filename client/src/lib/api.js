@@ -31,6 +31,11 @@ const request = (method, path, body) => coreFetch(`/play${path}`, { method, body
 
 export const getLevels = () => request("GET", "/levels");
 
+// Only succeeds once every level shows state: "complete" — see the server
+// route's comment. Never touches an existing Attempt/Response; it just
+// lets every level be played fresh again.
+export const resetProgress = () => request("POST", "/levels/reset-progress");
+
 export const getLevelAttempts = levelKey => request("GET", `/levels/${levelKey}/attempts`);
 
 export const getAchievements = () => request("GET", "/achievements");

@@ -19,7 +19,7 @@ import Attempt from "../server/src/models/Attempt.js";
 import Response from "../server/src/models/Response.js";
 import AuditLog from "../server/src/models/AuditLog.js";
 import { hashSecret, signParticipantToken, newJti } from "../server/src/services/auth.js";
-import { aggregateAttempt } from "../server/src/services/scoring.js";
+import { aggregateAttempt, computeLevelProgress, filterAttemptsByLevelResets } from "../server/src/services/scoring.js";
 import { ROLES } from "../shared/constants.js";
 
 const log = (...args) => console.log("[e2e-admin-content]", ...args);
@@ -1159,6 +1159,258 @@ const testParticipantManagement = async () => {
   log("participant management OK — prefixed bulk generation, labels on the session roster only, list filters, reset-pin severs the session, exclude/note with audit, slips carry code+arm only, no roster label reaches any of the four exports, and delete is a super_admin-only soft delete that hides the row everywhere without touching the document");
 };
 
+// --- Level reset (admin + participant self-reset) and hard delete -------
+// All-new fixtures, isolated from every other test in this file. Two
+// separate concerns: a reset never touches an existing Attempt/Response
+// (it's a boundary marker — see Participant.levelResets and
+// scoring.js/progress.js's comments), while hard delete is the one place
+// something can actually be removed, and only when it demonstrably has no
+// real play data behind it.
+const testResetAndHardDelete = async () => {
+  const superToken = await adminToken(superAdmin.email, superAdminPassword);
+  const plainToken = await adminToken(plainAdmin.email, plainAdminPassword);
+
+  const level = await Level.create({
+    key: `e2e-reset-${Date.now()}`,
+    order: 998,
+    title: "Reset scratch",
+    scene: "Bench",
+    role: "Tester",
+    objectives: ["reset obj"],
+    passMark: 50,
+    status: "published"
+  });
+  const participant = await Participant.create({ code: `E2E-RESET-${Date.now()}`, arm: "E" });
+
+  // --- Reset-level (admin): old attempt stays, a new one is the headline ---
+  const firstAttempt = await Attempt.create({
+    participantId: participant._id,
+    sessionId: new mongoose.Types.ObjectId(),
+    levelId: level._id,
+    attemptNo: 1,
+    kind: "first",
+    isPractice: false,
+    questionIds: [new mongoose.Types.ObjectId()],
+    startedAt: new Date(),
+    submittedAt: new Date(),
+    activeMs: 1000,
+    hiddenMs: 0,
+    score: 20,
+    accuracy: 20,
+    passed: false,
+    starsAwarded: 0,
+    status: "submitted"
+  });
+
+  const noReasonReset = await request("POST", `/admin/participants/${participant._id}/reset-level`, { levelId: String(level._id) }, { token: superToken });
+  assert.equal(noReasonReset.status, 400, "resetting a level needs a reason");
+  assert.equal(noReasonReset.body.error.code, "REASON_REQUIRED");
+
+  const asPlainReset = await request("POST", `/admin/participants/${participant._id}/reset-level`, { levelId: String(level._id), reason: "probe" }, { token: plainToken });
+  assert.equal(asPlainReset.status, 403, "a plain admin must not be able to reset a level");
+  assert.equal(asPlainReset.body.error.code, "SUPER_ADMIN_REQUIRED");
+
+  const resetRes = await request("POST", `/admin/participants/${participant._id}/reset-level`, { levelId: String(level._id), reason: "content review restart" }, { token: superToken });
+  assert.equal(resetRes.status, 200, JSON.stringify(resetRes.body));
+  assert.equal(resetRes.body.levelId, String(level._id));
+
+  const afterReset = await Participant.findById(participant._id).lean();
+  assert.equal(afterReset.levelResets.length, 1);
+  assert.equal(String(afterReset.levelResets[0].levelId), String(level._id));
+  assert.equal(afterReset.levelResets[0].resetBy, "admin");
+  assert.ok(await AuditLog.findOne({ action: "participant_level_reset", "target.id": participant._id }), "reset-level writes an audit row");
+
+  const secondAttempt = await Attempt.create({
+    participantId: participant._id,
+    sessionId: new mongoose.Types.ObjectId(),
+    levelId: level._id,
+    attemptNo: 2,
+    kind: "first",
+    isPractice: false,
+    questionIds: [new mongoose.Types.ObjectId()],
+    startedAt: new Date(),
+    submittedAt: new Date(),
+    activeMs: 1000,
+    hiddenMs: 0,
+    score: 100,
+    accuracy: 100,
+    passed: true,
+    starsAwarded: 3,
+    status: "submitted"
+  });
+
+  // Exercises computeLevelProgress + filterAttemptsByLevelResets directly
+  // (the exact pipeline loadFullProgress runs), scoped to just this one
+  // scratch level — sidesteps the real unlock chain entirely (this level's
+  // artificial `order` would otherwise gate it behind every real seeded
+  // level this participant never played) while still proving the actual
+  // reset-boundary logic end to end.
+  const freshParticipant = await Participant.findById(participant._id).lean();
+  const rawAttempts = await Attempt.find({ participantId: participant._id, levelId: level._id, isPractice: false, status: "submitted" });
+  const attemptsByLevelId = filterAttemptsByLevelResets(new Map([[String(level._id), rawAttempts]]), freshParticipant.levelResets);
+  const [levelProgress] = computeLevelProgress([level], attemptsByLevelId);
+  assert.equal(levelProgress.headline.attemptId, String(secondAttempt._id), "the post-reset attempt is the new frozen headline, not the pre-reset one");
+  assert.equal(levelProgress.state, "complete");
+
+  const stillThere = await Attempt.findById(firstAttempt._id).lean();
+  assert.ok(stillThere, "the pre-reset attempt must still exist in the database, completely untouched");
+  assert.equal(stillThere.accuracy, 20, "the pre-reset attempt's own fields are unchanged");
+
+  // --- Hard delete: refused with real data, allowed once truly unused ---
+  const notSoftDeleted = await request("DELETE", `/admin/participants/${participant._id}/permanent`, { reason: "probe" }, { token: superToken });
+  assert.equal(notSoftDeleted.status, 409, "hard delete refuses a participant that isn't soft-deleted yet");
+  assert.equal(notSoftDeleted.body.error.code, "NOT_SOFT_DELETED");
+
+  await request("DELETE", `/admin/participants/${participant._id}`, { reason: "e2e reset test cleanup" }, { token: superToken });
+
+  const hasAttempts = await request("DELETE", `/admin/participants/${participant._id}/permanent`, { reason: "probe" }, { token: superToken });
+  assert.equal(hasAttempts.status, 409, "hard delete refuses a participant with real attempts");
+  assert.equal(hasAttempts.body.error.code, "HAS_ATTEMPTS");
+
+  const unusedParticipant = await Participant.create({ code: `E2E-UNUSED-${Date.now()}`, arm: "C" });
+  await request("DELETE", `/admin/participants/${unusedParticipant._id}`, { reason: "test artifact" }, { token: superToken });
+  const hardDeletedParticipant = await request("DELETE", `/admin/participants/${unusedParticipant._id}/permanent`, { reason: "test artifact, never played" }, { token: superToken });
+  assert.equal(hardDeletedParticipant.status, 200, JSON.stringify(hardDeletedParticipant.body));
+  assert.equal(hardDeletedParticipant.body.permanent, true);
+  assert.ok(!(await Participant.findById(unusedParticipant._id)), "the document must actually be gone after a hard delete");
+  assert.ok(await AuditLog.findOne({ action: "participant_hard_deleted", "target.id": unusedParticipant._id }), "hard delete writes an audit row");
+
+  // --- Same guard shape for a Question ---
+  const unusedQuestion = await Question.create({
+    levelId: level._id,
+    levelKey: level.key,
+    sequence: 900,
+    type: "mcq",
+    title: "Unused Q",
+    objective: "reset obj",
+    prompt: "?",
+    options: [{ key: "A", text: "a" }, { key: "B", text: "b" }],
+    correct: "A",
+    feedback: { text: "ok" },
+    points: 10,
+    status: "draft",
+    version: 1
+  });
+  const notArchived = await request("DELETE", `/admin/questions/${unusedQuestion._id}/permanent`, { reason: "probe" }, { token: superToken });
+  assert.equal(notArchived.status, 409);
+  assert.equal(notArchived.body.error.code, "NOT_ARCHIVED");
+  await request("DELETE", `/admin/questions/${unusedQuestion._id}`, { reason: "archive first" }, { token: superToken });
+  const qHardDeleted = await request("DELETE", `/admin/questions/${unusedQuestion._id}/permanent`, { reason: "never served" }, { token: superToken });
+  assert.equal(qHardDeleted.status, 200, JSON.stringify(qHardDeleted.body));
+  assert.ok(!(await Question.findById(unusedQuestion._id)), "the question document must actually be gone");
+
+  const servedQuestion = await Question.create({
+    levelId: level._id,
+    levelKey: level.key,
+    sequence: 901,
+    type: "mcq",
+    title: "Served Q",
+    objective: "reset obj",
+    prompt: "?",
+    options: [{ key: "A", text: "a" }, { key: "B", text: "b" }],
+    correct: "A",
+    feedback: { text: "ok" },
+    points: 10,
+    status: "archived",
+    version: 1
+  });
+  await Response.create({
+    attemptId: firstAttempt._id,
+    participantId: participant._id,
+    sessionId: new mongoose.Types.ObjectId(),
+    questionId: servedQuestion._id,
+    questionVersion: 1,
+    levelId: level._id,
+    given: { selected: "A" },
+    isCorrect: true,
+    partialScore: 10,
+    shownAt: new Date(),
+    answeredAt: new Date(),
+    isRetry: false
+  });
+  const qHasResponses = await request("DELETE", `/admin/questions/${servedQuestion._id}/permanent`, { reason: "probe" }, { token: superToken });
+  assert.equal(qHasResponses.status, 409);
+  assert.equal(qHasResponses.body.error.code, "HAS_RESPONSES");
+
+  // --- Same guard shape for a Level ---
+  const unusedLevel = await Level.create({ key: `e2e-unused-${Date.now()}`, order: 999, title: "Unused level", scene: "x", role: "x", objectives: ["x"], passMark: 50, status: "draft" });
+  const levelNotSoftDeleted = await request("DELETE", `/admin/levels/${unusedLevel._id}/permanent`, { reason: "probe" }, { token: superToken });
+  assert.equal(levelNotSoftDeleted.status, 409);
+  assert.equal(levelNotSoftDeleted.body.error.code, "NOT_SOFT_DELETED");
+  const levelSoftDelete = await request("DELETE", `/admin/levels/${unusedLevel._id}`, { reason: "cleanup" }, { token: superToken });
+  assert.equal(levelSoftDelete.status, 200, JSON.stringify(levelSoftDelete.body));
+  const levelHardDeleted = await request("DELETE", `/admin/levels/${unusedLevel._id}/permanent`, { reason: "never played" }, { token: superToken });
+  assert.equal(levelHardDeleted.status, 200, JSON.stringify(levelHardDeleted.body));
+  assert.ok(!(await Level.findById(unusedLevel._id)), "the level document must actually be gone");
+
+  // The scratch `level` itself HAS attempts — a played level can never be
+  // hard-deleted even once soft-deleted.
+  await request("DELETE", `/admin/levels/${level._id}`, { reason: "test cleanup" }, { token: superToken });
+  const levelHasAttempts = await request("DELETE", `/admin/levels/${level._id}/permanent`, { reason: "probe" }, { token: superToken });
+  assert.equal(levelHasAttempts.status, 409);
+  assert.equal(levelHasAttempts.body.error.code, "HAS_ATTEMPTS");
+
+  // --- Whole-game reset (participant-initiated) ----------------------
+  const gameParticipant = await Participant.create({ code: `E2E-ALLDONE-${Date.now()}`, arm: "E" });
+  const gameToken = await playToken(gameParticipant.code, "4444");
+
+  const incomplete = await request("POST", "/play/levels/reset-progress", undefined, { token: gameToken });
+  assert.equal(incomplete.status, 403, "reset-progress refuses a participant who hasn't mastered every level");
+  assert.equal(incomplete.body.error.code, "LEVELS_INCOMPLETE");
+
+  // Directly master every currently-servable level for this participant —
+  // mirrors exactly what loadFullProgress itself queries, so this holds
+  // regardless of which other scratch levels other tests in this file
+  // happen to have created by this point in the run.
+  const allLevels = await Level.find({ deletedAt: null, status: { $in: ["published", "locked"] } });
+  for (const lvl of allLevels) {
+    await Attempt.create({
+      participantId: gameParticipant._id,
+      sessionId: new mongoose.Types.ObjectId(),
+      levelId: lvl._id,
+      attemptNo: 1,
+      kind: "first",
+      isPractice: false,
+      questionIds: [new mongoose.Types.ObjectId()],
+      startedAt: new Date(),
+      submittedAt: new Date(),
+      activeMs: 1000,
+      hiddenMs: 0,
+      score: 100,
+      accuracy: 100,
+      passed: true,
+      starsAwarded: 3,
+      status: "submitted"
+    });
+  }
+
+  const gameLevelsBefore = await request("GET", "/play/levels", undefined, { token: gameToken });
+  assert.ok(gameLevelsBefore.body.levels.every(l => l.state === "complete"), "sanity: every level shows complete before the reset");
+
+  const resetOk = await request("POST", "/play/levels/reset-progress", undefined, { token: gameToken });
+  assert.equal(resetOk.status, 200, JSON.stringify(resetOk.body));
+  assert.equal(resetOk.body.reset, true);
+
+  const gameLevelsAfter = await request("GET", "/play/levels", undefined, { token: gameToken });
+  assert.equal(gameLevelsAfter.body.levels[0].state, "active", "the first level unlocks fresh again after a whole-game reset");
+  assert.ok(gameLevelsAfter.body.levels.slice(1).every(l => l.state === "locked"), "every later level relocks after a whole-game reset");
+
+  const afterGameParticipant = await Participant.findById(gameParticipant._id).lean();
+  assert.equal(afterGameParticipant.levelResets.length, allLevels.length, "one levelResets entry per level was appended");
+  assert.ok(afterGameParticipant.levelResets.every(r => r.resetBy === "participant"));
+
+  const oldAttemptsStillThere = await Attempt.countDocuments({ participantId: gameParticipant._id, status: "submitted" });
+  assert.equal(oldAttemptsStillThere, allLevels.length, "every pre-reset attempt is still in the database, untouched");
+
+  await Participant.deleteMany({ _id: { $in: [participant._id, gameParticipant._id] } });
+  await Attempt.deleteMany({ participantId: { $in: [participant._id, gameParticipant._id] } });
+  await Response.deleteMany({ questionId: servedQuestion._id });
+  await Question.deleteOne({ _id: servedQuestion._id });
+  await Level.deleteOne({ _id: level._id });
+
+  log("reset-level, whole-game reset, and hard-delete OK — old attempts/responses always untouched, hard delete refused whenever real play data exists");
+};
+
 const run = async () => {
   await setup();
   try {
@@ -1176,6 +1428,7 @@ const run = async () => {
     await testRecordsAndAnalytics();
     await testExportsAndHandCheck();
     await testParticipantManagement();
+    await testResetAndHardDelete();
     log("ALL CHECKS PASSED");
   } finally {
     await teardown();

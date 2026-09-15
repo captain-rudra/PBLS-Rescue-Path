@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { getMe, getSessions, getParticipants, generateCodes, resetParticipantPin, updateParticipant, deleteParticipant } from "../lib/adminApi.js";
+import {
+  getMe,
+  getSessions,
+  getLevels,
+  getParticipants,
+  generateCodes,
+  resetParticipantPin,
+  updateParticipant,
+  deleteParticipant,
+  hardDeleteParticipant,
+  resetParticipantLevel
+} from "../lib/adminApi.js";
+import { confirmTwice } from "../lib/confirmTwice.js";
 
 // Backend stateOf() values (server/src/routes/admin/participants.js).
 const STATE_STYLE = {
@@ -8,7 +20,8 @@ const STATE_STYLE = {
   "pin set": "#7FB8E8",
   "signed in": "#34D399",
   locked: "#FFC94A",
-  excluded: "#FF6B5B"
+  excluded: "#FF6B5B",
+  deleted: "#FF6B5B"
 };
 
 const StateBadge = ({ state }) => (
@@ -236,7 +249,69 @@ const NoteCell = ({ participant, onSave }) => {
   );
 };
 
-const ParticipantRow = ({ participant, canDelete, onPatch, onResetPin, onDelete }) => {
+// Inline picker so an admin resets a specific level without leaving the
+// row — mirrors NoteCell's open/close-toggle shape above. Never touches an
+// existing Attempt/Response (see the server route's comment): it only
+// changes what counts as CURRENT progress, so the participant can play the
+// level fresh again while every earlier attempt stays in the records.
+const ResetLevelControl = ({ participant, levels, onReset }) => {
+  const [open, setOpen] = useState(false);
+  const [levelId, setLevelId] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  if (!open) {
+    return (
+      <button type="button" data-testid={`reset-level-${participant.code}`} onClick={() => setOpen(true)} className="mr-2 text-[11px] font-semibold text-[#FFC94A] underline">
+        Reset level
+      </button>
+    );
+  }
+
+  const confirmReset = async () => {
+    if (!levelId) return;
+    const level = levels.find(l => l.levelId === levelId);
+    const reason = confirmTwice({
+      reasonPrompt: `Reset ${participant.code}'s progress on "${level?.title ?? levelId}"? Every existing attempt stays in the records — this only lets them play the level fresh again. Reason (required, goes in the audit log):`,
+      retypeLabel: "Code",
+      retypeValue: participant.code
+    });
+    if (reason === null) return;
+    setBusy(true);
+    try {
+      await onReset(participant, levelId, reason);
+      setOpen(false);
+      setLevelId("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <span className="mr-2 inline-flex items-center gap-1">
+      <select
+        data-testid={`reset-level-select-${participant.code}`}
+        value={levelId}
+        onChange={e => setLevelId(e.target.value)}
+        className="rounded border border-[#3A4A63]/40 bg-white px-1 py-0.5 text-[11px]"
+      >
+        <option value="">Pick a level…</option>
+        {levels.map(l => (
+          <option key={l.levelId} value={l.levelId}>
+            {l.title}
+          </option>
+        ))}
+      </select>
+      <button type="button" disabled={!levelId || busy} onClick={confirmReset} className="text-[11px] font-semibold text-[#FFC94A] underline disabled:opacity-50">
+        Go
+      </button>
+      <button type="button" onClick={() => setOpen(false)} className="text-[11px] text-slate-400 underline">
+        cancel
+      </button>
+    </span>
+  );
+};
+
+const ParticipantRow = ({ participant, levels, canDelete, onPatch, onResetPin, onDelete, onResetLevel, onHardDelete }) => {
   const [busy, setBusy] = useState(false);
 
   const run = async fn => {
@@ -272,12 +347,25 @@ const ParticipantRow = ({ participant, canDelete, onPatch, onResetPin, onDelete 
   // second confirmation step on top of the reason, since there's no undo
   // button in this UI even though the row itself is recoverable in Mongo.
   const deleteRow = () => {
-    const reason = window.prompt(`Delete ${participant.code}? This removes it from every list, filter and export (the underlying record is kept, never hard-deleted). Reason (required — it goes in the audit log):`);
-    if (reason == null) return;
-    if (!reason.trim()) return window.alert("A reason is required to delete a participant.");
-    const typed = window.prompt(`Type the code "${participant.code}" to confirm.`);
-    if (typed !== participant.code) return window.alert("Code didn't match — nothing was deleted.");
-    return run(() => onDelete(participant, reason.trim()));
+    const reason = confirmTwice({
+      reasonPrompt: `Delete ${participant.code}? This removes it from every list, filter and export (the underlying record is kept, never hard-deleted). Reason (required — it goes in the audit log):`,
+      retypeLabel: "Code",
+      retypeValue: participant.code
+    });
+    if (reason === null) return;
+    return run(() => onDelete(participant, reason));
+  };
+
+  // Irreversible — only succeeds once already soft-deleted AND never
+  // played (the server refuses otherwise with HAS_ATTEMPTS).
+  const hardDeleteRow = () => {
+    const reason = confirmTwice({
+      reasonPrompt: `Permanently delete ${participant.code}? This cannot be undone. Reason (required — it goes in the audit log):`,
+      retypeLabel: "Code",
+      retypeValue: participant.code
+    });
+    if (reason === null) return;
+    return run(() => onHardDelete(participant, reason));
   };
 
   return (
@@ -316,6 +404,7 @@ const ParticipantRow = ({ participant, canDelete, onPatch, onResetPin, onDelete 
         )}
       </td>
       <td className="whitespace-nowrap pr-3 text-right">
+        {canDelete && levels && levels.length > 0 && <ResetLevelControl participant={participant} levels={levels} onReset={onResetLevel} />}
         <button
           type="button"
           data-testid={`reset-pin-${participant.code}`}
@@ -335,16 +424,28 @@ const ParticipantRow = ({ participant, canDelete, onPatch, onResetPin, onDelete 
         >
           {participant.excluded ? "Include" : "Exclude"}
         </button>
-        {canDelete && (
+        {canDelete && participant.state !== "deleted" && (
           <button
             type="button"
             data-testid={`delete-${participant.code}`}
             disabled={busy}
             onClick={deleteRow}
             title="Soft delete — removes it from every list and export, keeps the record for audit (super_admin only)"
-            className="text-[11px] font-semibold text-[#FF6B5B] underline disabled:opacity-50"
+            className="mr-2 text-[11px] font-semibold text-[#FF6B5B] underline disabled:opacity-50"
           >
             Delete
+          </button>
+        )}
+        {canDelete && participant.state === "deleted" && (
+          <button
+            type="button"
+            data-testid={`hard-delete-${participant.code}`}
+            disabled={busy}
+            onClick={hardDeleteRow}
+            title="Permanent — only works if this code was never played (super_admin only)"
+            className="text-[11px] font-semibold text-[#FF6B5B] underline disabled:opacity-50"
+          >
+            Hard delete
           </button>
         )}
       </td>
@@ -354,7 +455,9 @@ const ParticipantRow = ({ participant, canDelete, onPatch, onResetPin, onDelete 
 
 export const PeoplePage = () => {
   const [filters, setFilters] = useState({ sessionId: null, arm: null });
+  const [showDeleted, setShowDeleted] = useState(false);
   const [sessions, setSessions] = useState([]);
+  const [levels, setLevels] = useState([]);
   const [participants, setParticipants] = useState(null);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -363,10 +466,10 @@ export const PeoplePage = () => {
 
   const load = useCallback(() => {
     setError(null);
-    getParticipants(filters)
+    getParticipants({ ...filters, includeDeleted: showDeleted })
       .then(res => setParticipants(res.participants))
       .catch(e => setError(e.message));
-  }, [filters]);
+  }, [filters, showDeleted]);
 
   const loadSessions = useCallback(() => {
     getSessions()
@@ -376,6 +479,9 @@ export const PeoplePage = () => {
 
   useEffect(() => {
     loadSessions();
+    getLevels()
+      .then(res => setLevels(res.levels))
+      .catch(() => setLevels([]));
     getMe()
       .then(res => setAdmin(res.admin))
       .catch(() => {});
@@ -428,11 +534,30 @@ export const PeoplePage = () => {
   const handleDelete = async (participant, reason) => {
     try {
       await deleteParticipant(participant.participantId, reason);
-      setParticipants(prev => prev.filter(p => p.participantId !== participant.participantId));
+      // Showing deleted rows: refetch so the row reappears with state:
+      // "deleted" instead of vanishing (it's the whole point of the toggle).
+      if (showDeleted) load();
+      else setParticipants(prev => prev.filter(p => p.participantId !== participant.participantId));
       setNotice(`Deleted ${participant.code}. The record is kept for audit — nothing is hard deleted — but it's out of every list and export now.`);
     } catch (e) {
       setError(e.message);
     }
+  };
+
+  const handleHardDelete = async (participant, reason) => {
+    try {
+      await hardDeleteParticipant(participant.participantId, reason);
+      setParticipants(prev => prev.filter(p => p.participantId !== participant.participantId));
+      setNotice(`Permanently deleted ${participant.code}.`);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleResetLevel = async (participant, levelId, reason) => {
+    await resetParticipantLevel(participant.participantId, levelId, reason)
+      .then(() => setNotice(`Reset ${participant.code}'s progress on that level — every earlier attempt is still in the records.`))
+      .catch(e => setError(e.message));
   };
 
   const slipsHref = useMemo(() => {
@@ -481,8 +606,14 @@ export const PeoplePage = () => {
           <GeneratePanel sessions={sessions} onGenerated={handleGenerated} />
         </div>
 
-        <div className="mb-3">
+        <div className="mb-3 flex flex-wrap items-center gap-3">
           <Filters filters={filters} setFilters={setFilters} sessions={sessions} />
+          {isSuperAdmin && (
+            <label className="flex items-center gap-1.5 text-[12px] text-slate-500">
+              <input type="checkbox" checked={showDeleted} onChange={e => setShowDeleted(e.target.checked)} />
+              Show deleted
+            </label>
+          )}
         </div>
 
         {!participants && !error && <p className="text-[12px] text-slate-400">Loading…</p>}
@@ -507,7 +638,17 @@ export const PeoplePage = () => {
               </thead>
               <tbody>
                 {participants.map(p => (
-                  <ParticipantRow key={p.participantId} participant={p} canDelete={isSuperAdmin} onPatch={handlePatch} onResetPin={handleResetPin} onDelete={handleDelete} />
+                  <ParticipantRow
+                    key={p.participantId}
+                    participant={p}
+                    levels={levels}
+                    canDelete={isSuperAdmin}
+                    onPatch={handlePatch}
+                    onResetPin={handleResetPin}
+                    onDelete={handleDelete}
+                    onResetLevel={handleResetLevel}
+                    onHardDelete={handleHardDelete}
+                  />
                 ))}
               </tbody>
             </table>

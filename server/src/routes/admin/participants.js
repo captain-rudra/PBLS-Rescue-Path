@@ -3,6 +3,8 @@ import mongoose from "mongoose";
 import Participant from "../../models/Participant.js";
 import Session from "../../models/Session.js";
 import Level from "../../models/Level.js";
+import Attempt from "../../models/Attempt.js";
+import { STATUS } from "../../../../shared/constants.js";
 import { sendError } from "../../lib/httpError.js";
 import { writeAuditLog } from "../../services/audit.js";
 import { requireSuperAdmin } from "../../middleware/requireSuperAdmin.js";
@@ -30,6 +32,7 @@ const nextCodes = async (prefix, arm, count) => {
 };
 
 const stateOf = p => {
+  if (p.deletedAt) return "deleted";
   if (p.excluded) return "excluded";
   if (p.lockedUntil && new Date(p.lockedUntil) > new Date()) return "locked";
   if (!p.pinHash) return "no pin yet";
@@ -53,7 +56,8 @@ const rowOf = (p, label = null) => ({
   lockedUntil: p.lockedUntil ?? null,
   deviceChangedAt: p.deviceChangedAt ?? null,
   sessionId: p.sessionId ? String(p.sessionId) : null,
-  sessionLabel: label
+  sessionLabel: label,
+  deletedAt: p.deletedAt ?? null
 });
 
 // Builds sessionId -> (participantId -> label) from the sessions the given
@@ -72,9 +76,14 @@ const labelLookup = async participants => {
 };
 
 // --- List (SPEC 6) — filterable by session and arm ---------------------
+// includeDeleted surfaces soft-deleted codes too (rowOf's `deletedAt`
+// distinguishes them) — needed so a super_admin can actually FIND a
+// soft-deleted, never-played test code again to permanently delete it
+// (the /permanent route below requires deletedAt to already be set, but
+// the row is otherwise invisible once deleted).
 router.get("/", async (request, response) => {
-  const { sessionId, arm } = request.query;
-  const filter = { deletedAt: null };
+  const { sessionId, arm, includeDeleted } = request.query;
+  const filter = includeDeleted === "true" ? {} : { deletedAt: null };
   if (sessionId) {
     if (!mongoose.isValidObjectId(sessionId)) return sendError(response, 400, "INVALID_SESSION_ID", "sessionId is not a valid id");
     filter.sessionId = new mongoose.Types.ObjectId(sessionId);
@@ -315,6 +324,57 @@ router.patch("/:id", async (request, response) => {
   response.json({ participant: rowOf(participant.toObject()) });
 });
 
+// --- Reset level progress (admin-triggered) --------------------------
+// Gives a participant a clean slate on one level without touching a
+// single existing Attempt/Response — those stay in the database forever
+// (CLAUDE.md rule 1). A reset is just a boundary marker
+// (Participant.levelResets, see the model): loadFullProgress ignores any
+// attempt for this level created before resetAt, so a fresh attempt made
+// after this becomes the new frozen headline while every earlier attempt
+// still exists, unchanged, for records and export. super_admin-only and
+// reason-required, like every other irreversible-sounding action in this
+// file — resetting someone's displayed progress is exactly that sounding,
+// even though nothing is actually destroyed.
+router.post("/:id/reset-level", requireSuperAdmin, async (request, response) => {
+  const participant = await loadParticipantOr404(response, request.params.id);
+  if (!participant) return;
+
+  const { levelId } = request.body || {};
+  if (!mongoose.isValidObjectId(levelId)) return sendError(response, 400, "INVALID_LEVEL_ID", "levelId is not a valid id");
+  const level = await Level.findOne({ _id: levelId, deletedAt: null });
+  if (!level) return sendError(response, 404, "LEVEL_NOT_FOUND", "No such level");
+
+  const reason = (request.body?.reason || "").trim();
+  if (!reason) return sendError(response, 400, "REASON_REQUIRED", "a reason is required to reset a participant's level");
+
+  const before = rowOf(participant.toObject());
+  const resetAt = new Date();
+
+  // A dangling in_progress attempt on this level would otherwise block a
+  // fresh one (the partial unique index allows only one in_progress
+  // attempt per participant+level) — mark it abandoned, a normal lifecycle
+  // status this model already has, not a rewrite of a submitted result.
+  await Attempt.updateMany(
+    { participantId: participant._id, levelId: level._id, status: STATUS.IN_PROGRESS },
+    { $set: { status: STATUS.ABANDONED } }
+  );
+
+  participant.levelResets.push({ levelId: level._id, resetAt, resetBy: "admin", adminId: request.admin._id });
+  await participant.save();
+
+  await writeAuditLog({
+    actorId: request.admin._id,
+    actorRole: request.admin.role,
+    action: "participant_level_reset",
+    target: { kind: "participant", id: participant._id },
+    before,
+    after: rowOf(participant.toObject()),
+    reason
+  });
+
+  response.json({ reset: true, participantId: String(participant._id), levelId: String(level._id), resetAt });
+});
+
 // --- Delete (SPEC 6, CLAUDE.md rule 5) --------------------------------
 // A SOFT delete, like every other delete in this codebase: sets
 // `deletedAt`, never removes the document. `deletedAt: null` is already
@@ -349,6 +409,45 @@ router.delete("/:id", requireSuperAdmin, async (request, response) => {
   });
 
   response.json({ deleted: true, participantId: String(participant._id) });
+});
+
+// --- Permanently delete (hard delete) --------------------------------
+// Irreversible — the one exception to CLAUDE.md rule 5 in this codebase,
+// and deliberately narrow: reserved for a code that is ALREADY
+// soft-deleted (this is "empty the trash," not a shortcut past the soft
+// delete above) AND was never actually used. If any Attempt was ever
+// created against this participant, the request is refused outright —
+// hard-deleting a document that produced real Attempt/Response rows would
+// corrupt the one record left explaining who those rows belong to
+// (CLAUDE.md: "a number must be traceable to how it was produced"). The
+// Attempt/Response rows themselves are never touched by anything in this
+// route, matching every other rule in this file.
+router.delete("/:id/permanent", requireSuperAdmin, async (request, response) => {
+  if (!mongoose.isValidObjectId(request.params.id)) return sendError(response, 400, "INVALID_ID", "Not a valid participant id");
+  const participant = await Participant.findById(request.params.id);
+  if (!participant) return sendError(response, 404, "PARTICIPANT_NOT_FOUND", "No such participant");
+  if (!participant.deletedAt) return sendError(response, 409, "NOT_SOFT_DELETED", "Soft-delete this participant first");
+
+  const reason = (request.body?.reason || "").trim();
+  if (!reason) return sendError(response, 400, "REASON_REQUIRED", "a reason is required to permanently delete a participant");
+
+  const hasAttempts = await Attempt.exists({ participantId: participant._id });
+  if (hasAttempts) return sendError(response, 409, "HAS_ATTEMPTS", "This code has real play data and cannot be permanently deleted");
+
+  const before = rowOf(participant.toObject());
+  await participant.deleteOne();
+
+  await writeAuditLog({
+    actorId: request.admin._id,
+    actorRole: request.admin.role,
+    action: "participant_hard_deleted",
+    target: { kind: "participant", id: participant._id },
+    before,
+    after: null,
+    reason
+  });
+
+  response.json({ deleted: true, permanent: true, participantId: before.participantId });
 });
 
 export default router;

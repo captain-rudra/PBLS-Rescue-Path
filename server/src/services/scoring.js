@@ -239,15 +239,23 @@ export const summarizeObjectives = ({ level, questions, responses }) => {
 /**
  * Rolls a level's full attempt history into the figures the dashboard,
  * result card and records all need — computed fresh from the attempts
- * collection every time, never stored (SPEC 2.3): the first attempt ever
- * made (attemptNo 1) is frozen as the level's headline score/accuracy/
- * stars forever, regardless of how many restarts or remediation rounds
- * follow; mastery is the first attempt (of any kind) that reached 100%;
- * restart and remediation counts are plain tallies of attempt `kind`.
+ * collection every time, never stored (SPEC 2.3): the earliest attempt in
+ * `attempts` is frozen as the level's headline score/accuracy/stars
+ * forever, regardless of how many restarts or remediation rounds follow;
+ * mastery is the first attempt (of any kind) that reached 100%; restart and
+ * remediation counts are plain tallies of attempt `kind`.
+ *
+ * "Earliest in `attempts`", not literally attemptNo 1: normally they're the
+ * same attempt, but after an admin/participant-triggered level reset (see
+ * Participant.levelResets + filterAttemptsByLevelResets below), the caller
+ * passes only the attempts made after the reset boundary — attemptNo keeps
+ * counting up forever (it's a global per-level counter, never reused), so
+ * the earliest SURVIVING attempt in that filtered set becomes the new
+ * frozen headline instead.
  */
 export const summarizeLevelAttempts = attempts => {
   const sorted = [...attempts].sort((a, b) => a.attemptNo - b.attemptNo);
-  const firstAttempt = sorted.find(a => a.attemptNo === 1) || null;
+  const firstAttempt = sorted[0] || null;
   const masteryAttempt = sorted.find(a => a.accuracy === 100) || null;
   const latestAttempt = sorted.length ? sorted[sorted.length - 1] : null;
   const restartCount = Math.max(0, sorted.filter(a => a.kind === "first").length - 1);
@@ -297,4 +305,34 @@ export const computeLevelProgress = (levels, attemptsByLevelId) => {
     previousMastered = unlocked && Boolean(summary.masteryAttempt);
   }
   return progress;
+};
+
+/**
+ * Applies Participant.levelResets to a raw attemptsByLevelId map (as built
+ * by GET /play/levels and loadProgressFor) before it reaches
+ * computeLevelProgress: for each level that was ever reset, only attempts
+ * created strictly after the MOST RECENT resetAt still count toward current
+ * progress. Everything before that point is left completely untouched in
+ * the database — this only changes what this one computation considers
+ * "current," never what exists.
+ *
+ * Pure — returns a new Map, never mutates `attemptsByLevelId` or its
+ * arrays, since the caller may reuse the raw map elsewhere.
+ */
+export const filterAttemptsByLevelResets = (attemptsByLevelId, levelResets) => {
+  if (!levelResets?.length) return attemptsByLevelId;
+
+  const latestResetByLevelId = new Map();
+  for (const reset of levelResets) {
+    const key = String(reset.levelId);
+    const existing = latestResetByLevelId.get(key);
+    if (!existing || reset.resetAt > existing) latestResetByLevelId.set(key, reset.resetAt);
+  }
+
+  const filtered = new Map();
+  for (const [levelId, attempts] of attemptsByLevelId.entries()) {
+    const resetAt = latestResetByLevelId.get(levelId);
+    filtered.set(levelId, resetAt ? attempts.filter(a => a.createdAt > resetAt) : attempts);
+  }
+  return filtered;
 };

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { getLevels, getAchievements, getMe } from "../lib/api.js";
+import { getLevels, getAchievements, getMe, resetProgress } from "../lib/api.js";
 import { PathNode } from "./PathNode.jsx";
 import { BadgeShelf } from "./BadgeShelf.jsx";
 import { MuteToggle } from "../components/MuteToggle.jsx";
@@ -21,6 +21,7 @@ export const Dashboard = () => {
   const [error, setError] = useState(null);
   const [muted, toggleMuted] = useMute();
   const [participantCode, setParticipantCode] = useState(null);
+  const [resetting, setResetting] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const justUnlockedLevelKey = location.state?.justUnlockedLevelKey ?? null;
@@ -83,6 +84,25 @@ export const Dashboard = () => {
   // locked or never-attempted level.
   const handleReview = level => navigate(`/review/${level.headline.attemptId}`);
 
+  // Only offered once every level shows "complete" — the server enforces
+  // this too (LEVELS_INCOMPLETE otherwise). Never touches an existing
+  // attempt/response: every past playthrough stays in the records, this
+  // just relocks every level so it can be played fresh again.
+  const allComplete = Boolean(levels?.length) && levels.every(l => l.state === "complete");
+  const handlePlayAgain = async () => {
+    if (!window.confirm("Play the whole path again from the start? Every level will re-lock, but nothing from your first playthrough is lost.")) return;
+    setResetting(true);
+    try {
+      await resetProgress();
+      const response = await getLevels();
+      setLevels(response.levels);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return (
     <div className="relative min-h-screen overflow-x-hidden text-[#FFF7ED]">
       <GameBackground />
@@ -98,7 +118,20 @@ export const Dashboard = () => {
             </p>
           )}
         </div>
-        <MuteToggle muted={muted} onToggle={toggleMuted} />
+        <div className="flex items-center gap-2">
+          {allComplete && (
+            <button
+              type="button"
+              data-testid="play-again"
+              disabled={resetting}
+              onClick={handlePlayAgain}
+              className="rounded-full border border-[#34D399]/60 px-3 py-1.5 text-[12px] font-semibold text-[#34D399] hover:bg-[#34D399]/10 disabled:opacity-50"
+            >
+              {resetting ? "Resetting…" : "Play again from the start"}
+            </button>
+          )}
+          <MuteToggle muted={muted} onToggle={toggleMuted} />
+        </div>
       </header>
 
       {levels && <BadgeShelf levels={levels} achievements={achievements} />}

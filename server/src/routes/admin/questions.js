@@ -2,6 +2,8 @@ import { Router } from "express";
 import mongoose from "mongoose";
 import Level from "../../models/Level.js";
 import Question from "../../models/Question.js";
+import Attempt from "../../models/Attempt.js";
+import Response from "../../models/Response.js";
 import { STATUS, QUESTION_TYPES } from "../../../../shared/constants.js";
 import { sendError } from "../../lib/httpError.js";
 import { requireSuperAdmin } from "../../middleware/requireSuperAdmin.js";
@@ -291,6 +293,46 @@ router.delete("/:id", requireSuperAdmin, async (request, response) => {
   });
 
   response.json({ question: rowPayload(question) });
+});
+
+// Permanently delete (hard delete) — irreversible, and deliberately
+// narrow: reserved for a question that is ALREADY archived AND was never
+// actually served to a real participant. Refuses if any Response answers
+// it, or any Attempt ever pinned it into questionIds (shown but perhaps
+// never answered before the attempt was abandoned) — either way,
+// hard-deleting it would corrupt the one record explaining what that row
+// of real data was actually looking at (CLAUDE.md: "pin the question
+// version"). The Response/Attempt rows themselves are never touched here.
+router.delete("/:id/permanent", requireSuperAdmin, async (request, response) => {
+  const { id } = request.params;
+  if (!mongoose.isValidObjectId(id)) return sendError(response, 400, "INVALID_ID", "Not a valid question id");
+  const question = await Question.findById(id);
+  if (!question) return sendError(response, 404, "QUESTION_NOT_FOUND", "No such question");
+  if (question.status !== STATUS.ARCHIVED) return sendError(response, 409, "NOT_ARCHIVED", "Archive this question first");
+
+  const reason = (request.body?.reason || "").trim();
+  if (!reason) return sendError(response, 400, "REASON_REQUIRED", "a reason is required to permanently delete a question");
+
+  const [hasResponses, hasAttempts] = await Promise.all([
+    Response.exists({ questionId: question._id }),
+    Attempt.exists({ questionIds: question._id })
+  ]);
+  if (hasResponses || hasAttempts) return sendError(response, 409, "HAS_RESPONSES", "This question was served to a real attempt and cannot be permanently deleted");
+
+  const before = rowPayload(question);
+  await question.deleteOne();
+
+  await writeAuditLog({
+    actorId: request.admin._id,
+    actorRole: request.admin.role,
+    action: "question_hard_deleted",
+    target: { kind: "question", id: question._id },
+    before,
+    after: null,
+    reason
+  });
+
+  response.json({ deleted: true, permanent: true, questionId: before.questionId });
 });
 
 // SPEC 4.2: "reordering rewrites sequence for the whole level in one

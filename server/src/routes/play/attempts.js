@@ -10,11 +10,11 @@ import {
   toPlayerQuestion,
   aggregateAttempt,
   summarizeObjectives,
-  computeLevelProgress,
   summarizeLevelAttempts,
   remediationRoundFor,
   outcomeFor
 } from "../../services/scoring.js";
+import { loadFullProgress } from "../../services/progress.js";
 import { loadAchievementInputs, summarizeAchievements } from "../../services/achievements.js";
 
 const router = Router();
@@ -57,24 +57,10 @@ const buildPerformanceSummary = (level, questions, responses) => {
   return { objectives, missedItems };
 };
 
-const loadProgressFor = async (participantId, levelKey) => {
-  const levels = await Level.find({ deletedAt: null, status: { $in: [STATUS.PUBLISHED, STATUS.LOCKED] } }).sort({ order: 1 });
+const loadProgressFor = async (participant, levelKey) => {
+  const { levels, progress } = await loadFullProgress(participant);
   const level = levels.find(l => l.key === levelKey);
   if (!level) return { level: null };
-
-  const attempts = await Attempt.find({
-    participantId,
-    isPractice: false,
-    status: STATUS.SUBMITTED,
-    levelId: { $in: levels.map(l => l._id) }
-  });
-  const attemptsByLevelId = new Map();
-  for (const attempt of attempts) {
-    const key = String(attempt.levelId);
-    if (!attemptsByLevelId.has(key)) attemptsByLevelId.set(key, []);
-    attemptsByLevelId.get(key).push(attempt);
-  }
-  const progress = computeLevelProgress(levels, attemptsByLevelId);
   const target = progress.find(p => p.level.key === levelKey);
   return { level, target };
 };
@@ -107,7 +93,7 @@ router.post("/", async (request, response) => {
   if (!request.participant.sessionId) return sendError(response, 400, "NO_SESSION", "Participant is not attached to a session");
 
   for (let createAttempt = 1; createAttempt <= MAX_CREATE_ATTEMPTS; createAttempt++) {
-    const { level, target } = await loadProgressFor(request.participant._id, levelKey);
+    const { level, target } = await loadProgressFor(request.participant, levelKey);
     if (!level) return sendError(response, 404, "LEVEL_NOT_FOUND", "No servable level matches that key");
     if (!target.unlocked) return sendError(response, 403, "LEVEL_LOCKED", "This level is not yet unlocked for this participant");
 

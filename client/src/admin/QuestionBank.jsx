@@ -3,8 +3,20 @@ import { Link, useNavigate } from "react-router-dom";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, sortableKeyboardCoordinates, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { getLevels, getQuestions, lockLevel, unlockLevel, archiveQuestion, reorderQuestions, getMe } from "../lib/adminApi.js";
+import {
+  getLevels,
+  getQuestions,
+  lockLevel,
+  unlockLevel,
+  archiveQuestion,
+  hardDeleteQuestion,
+  deleteLevel,
+  hardDeleteLevel,
+  reorderQuestions,
+  getMe
+} from "../lib/adminApi.js";
 import { QUESTION_TYPES, STATUS } from "../../../shared/constants.js";
+import { confirmTwice } from "../lib/confirmTwice.js";
 
 const STATUS_STYLE = {
   draft: { bg: "#3A4A63", text: "#FFF7ED" },
@@ -43,7 +55,7 @@ const MediaState = ({ mediaStatus }) => {
   );
 };
 
-const RowContent = ({ question, canDelete, onArchive, dragHandle }) => (
+const RowContent = ({ question, canDelete, onArchive, onHardDelete, dragHandle }) => (
   <>
     {dragHandle}
     <span className="w-6 text-[11px] text-slate-400">{question.sequence}</span>
@@ -60,6 +72,11 @@ const RowContent = ({ question, canDelete, onArchive, dragHandle }) => (
         Archive
       </button>
     )}
+    {canDelete && question.status === "archived" && (
+      <button type="button" onClick={() => onHardDelete(question)} className="text-[11px] font-semibold text-[#FF6B5B] underline">
+        Hard delete
+      </button>
+    )}
   </>
 );
 
@@ -69,7 +86,7 @@ const RowContent = ({ question, canDelete, onArchive, dragHandle }) => (
 // never calls useSortable at all rather than calling it with dragging
 // disabled — keeps the two rendering paths honest about what's actually
 // interactive.
-const SortableRow = ({ question, canDelete, onArchive }) => {
+const SortableRow = ({ question, canDelete, onArchive, onHardDelete }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: question.questionId });
   const style = { transform: CSS.Transform.toString(transform), transition };
   return (
@@ -83,6 +100,7 @@ const SortableRow = ({ question, canDelete, onArchive }) => {
         question={question}
         canDelete={canDelete}
         onArchive={onArchive}
+        onHardDelete={onHardDelete}
         dragHandle={
           <button type="button" {...attributes} {...listeners} className="cursor-grab text-slate-400" aria-label="Drag to reorder" title="Drag to reorder">
             ⠿
@@ -93,13 +111,13 @@ const SortableRow = ({ question, canDelete, onArchive }) => {
   );
 };
 
-const StaticRow = ({ question, canDelete, onArchive }) => (
+const StaticRow = ({ question, canDelete, onArchive, onHardDelete }) => (
   <li data-testid={`question-row-${question.questionId}`} className="flex items-center gap-3 rounded-md border border-[#3A4A63]/20 bg-white/60 px-3 py-2 text-[13px]">
-    <RowContent question={question} canDelete={canDelete} onArchive={onArchive} dragHandle={<span className="w-4 text-slate-300">⠿</span>} />
+    <RowContent question={question} canDelete={canDelete} onArchive={onArchive} onHardDelete={onHardDelete} dragHandle={<span className="w-4 text-slate-300">⠿</span>} />
   </li>
 );
 
-const LevelGroup = ({ level, questions, admin, reorderDisabled, onReorder, onLock, onUnlock, onArchive }) => {
+const LevelGroup = ({ level, questions, admin, reorderDisabled, onReorder, onLock, onUnlock, onArchive, onHardDeleteQuestion, onDeleteLevel, onHardDeleteLevel }) => {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const ids = questions.map(q => q.questionId);
   const isSuperAdmin = admin?.role === "super_admin";
@@ -115,23 +133,37 @@ const LevelGroup = ({ level, questions, admin, reorderDisabled, onReorder, onLoc
     <section className="mb-6">
       <div className="mb-2 flex items-center justify-between">
         <div>
-          <h2 className="text-[14px] font-semibold text-[#16243D]">{level.title}</h2>
+          <h2 className="text-[14px] font-semibold text-[#16243D]">
+            {level.title} {level.deletedAt && <span className="ml-1 rounded-full bg-[#FF6B5B]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#FF6B5B]">Deleted</span>}
+          </h2>
           <p className="text-[11px] text-slate-500">
             {level.key} · <StatusBadgeInline status={level.status} /> · {questions.length} question{questions.length === 1 ? "" : "s"}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Link to={`/admin/new-question?levelKey=${level.key}`} data-testid={`new-question-${level.key}`} className="rounded-md border border-[#3A4A63]/40 px-2.5 py-1 text-[11px] font-semibold text-[#16243D] hover:bg-white">
-            + New question
-          </Link>
-          {isSuperAdmin && level.status !== "locked" && (
+          {!level.deletedAt && (
+            <Link to={`/admin/new-question?levelKey=${level.key}`} data-testid={`new-question-${level.key}`} className="rounded-md border border-[#3A4A63]/40 px-2.5 py-1 text-[11px] font-semibold text-[#16243D] hover:bg-white">
+              + New question
+            </Link>
+          )}
+          {isSuperAdmin && !level.deletedAt && level.status !== "locked" && (
             <button type="button" onClick={() => onLock(level)} data-testid={`lock-${level.key}`} className="rounded-md border border-[#FFC94A] px-2.5 py-1 text-[11px] font-semibold text-[#16243D] hover:bg-[#FFC94A]/10">
               Lock level
             </button>
           )}
-          {isSuperAdmin && level.status === "locked" && (
+          {isSuperAdmin && !level.deletedAt && level.status === "locked" && (
             <button type="button" onClick={() => onUnlock(level)} data-testid={`unlock-${level.key}`} className="rounded-md border border-[#34D399] px-2.5 py-1 text-[11px] font-semibold text-[#16243D] hover:bg-[#34D399]/10">
               Unlock level
+            </button>
+          )}
+          {isSuperAdmin && !level.deletedAt && (
+            <button type="button" onClick={() => onDeleteLevel(level)} data-testid={`delete-level-${level.key}`} className="rounded-md border border-[#FF6B5B] px-2.5 py-1 text-[11px] font-semibold text-[#FF6B5B] hover:bg-[#FF6B5B]/10">
+              Delete level
+            </button>
+          )}
+          {isSuperAdmin && level.deletedAt && (
+            <button type="button" onClick={() => onHardDeleteLevel(level)} data-testid={`hard-delete-level-${level.key}`} className="rounded-md border border-[#FF6B5B] bg-[#FF6B5B]/10 px-2.5 py-1 text-[11px] font-semibold text-[#FF6B5B]">
+              Hard delete level
             </button>
           )}
         </div>
@@ -144,7 +176,7 @@ const LevelGroup = ({ level, questions, admin, reorderDisabled, onReorder, onLoc
           <p className="mb-1.5 text-[10px] text-slate-400">Clear the type/status filter to drag-reorder — reordering rewrites the whole level's sequence at once.</p>
           <ol className="flex flex-col gap-1.5">
             {questions.map(question => (
-              <StaticRow key={question.questionId} question={question} canDelete={isSuperAdmin} onArchive={onArchive} />
+              <StaticRow key={question.questionId} question={question} canDelete={isSuperAdmin} onArchive={onArchive} onHardDelete={onHardDeleteQuestion} />
             ))}
           </ol>
         </>
@@ -153,7 +185,7 @@ const LevelGroup = ({ level, questions, admin, reorderDisabled, onReorder, onLoc
           <SortableContext items={ids} strategy={verticalListSortingStrategy}>
             <ol className="flex flex-col gap-1.5">
               {questions.map(question => (
-                <SortableRow key={question.questionId} question={question} canDelete={isSuperAdmin} onArchive={onArchive} />
+                <SortableRow key={question.questionId} question={question} canDelete={isSuperAdmin} onArchive={onArchive} onHardDelete={onHardDeleteQuestion} />
               ))}
             </ol>
           </SortableContext>
@@ -179,12 +211,17 @@ export const QuestionBank = () => {
   const [counts, setCounts] = useState(null);
   const [admin, setAdmin] = useState(null);
   const [filters, setFilters] = useState({ levelKey: "", type: "", status: "" });
+  const [showDeletedLevels, setShowDeletedLevels] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const [levelsRes, questionsRes, meRes] = await Promise.all([getLevels(), getQuestions(filters), getMe()]);
+      const [levelsRes, questionsRes, meRes] = await Promise.all([
+        getLevels({ includeDeleted: showDeletedLevels }),
+        getQuestions(filters),
+        getMe()
+      ]);
       setLevels(levelsRes.levels);
       setQuestions(questionsRes.questions);
       setCounts(questionsRes.counts);
@@ -192,7 +229,7 @@ export const QuestionBank = () => {
     } catch (err) {
       setError(err.message);
     }
-  }, [filters]);
+  }, [filters, showDeletedLevels]);
 
   useEffect(() => {
     load();
@@ -259,6 +296,51 @@ export const QuestionBank = () => {
       setError(err.message);
     }
   };
+  const handleHardDeleteQuestion = async question => {
+    const reason = confirmTwice({
+      reasonPrompt: `Permanently delete "${question.title}"? This cannot be undone — it only works because it's archived and was never served to a real attempt. Reason (required, goes in the audit log):`,
+      retypeLabel: "Title",
+      retypeValue: question.title
+    });
+    if (reason === null) return;
+    try {
+      await hardDeleteQuestion(question.questionId, reason);
+      setNotice(`Permanently deleted "${question.title}".`);
+      load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  const handleDeleteLevel = async level => {
+    const reason = confirmTwice({
+      reasonPrompt: `Delete "${level.title}"? This removes it from every picker and stops it being served — the record is kept, never hard-deleted. Reason (required):`,
+      retypeLabel: "Level key",
+      retypeValue: level.key
+    });
+    if (reason === null) return;
+    try {
+      await deleteLevel(level.levelId, reason);
+      setNotice(`Deleted "${level.title}".`);
+      load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  const handleHardDeleteLevel = async level => {
+    const reason = confirmTwice({
+      reasonPrompt: `Permanently delete "${level.title}"? This cannot be undone — it only works because it's already deleted and was never played. Reason (required):`,
+      retypeLabel: "Level key",
+      retypeValue: level.key
+    });
+    if (reason === null) return;
+    try {
+      await hardDeleteLevel(level.levelId, reason);
+      setNotice(`Permanently deleted "${level.title}".`);
+      load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#FFF7ED] text-[#16243D]">
@@ -315,6 +397,12 @@ export const QuestionBank = () => {
                 </option>
               ))}
           </select>
+          {admin?.role === "super_admin" && (
+            <label className="flex items-center gap-1.5 text-[12px] text-slate-500">
+              <input type="checkbox" checked={showDeletedLevels} onChange={e => setShowDeletedLevels(e.target.checked)} />
+              Show deleted levels
+            </label>
+          )}
         </div>
 
         {!questions && !error && <p className="text-sm text-slate-500">Loading…</p>}
@@ -331,6 +419,9 @@ export const QuestionBank = () => {
               onLock={handleLock}
               onUnlock={handleUnlock}
               onArchive={handleArchive}
+              onHardDeleteQuestion={handleHardDeleteQuestion}
+              onDeleteLevel={handleDeleteLevel}
+              onHardDeleteLevel={handleHardDeleteLevel}
             />
           ))}
       </div>
