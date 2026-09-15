@@ -37,6 +37,13 @@ to change).
 
 ## 2. Server
 
+A `render.yaml` blueprint is committed at the repo root for a Render web
+service (`npm ci` / `npm run start` / health check at `/health`) — the three
+secret env vars (`MONGODB_URI`, `JWT_SECRET`, `CLIENT_ORIGIN`) are marked
+`sync: false` so Render prompts for them in the dashboard rather than
+storing real values in this file. Using it is optional — connecting the
+GitHub repo and setting these by hand works identically.
+
 ### Env vars
 
 | Var | Required? | Notes |
@@ -112,6 +119,13 @@ single-server state, not built to coordinate across replicas:
 ---
 
 ## 3. Client
+
+A `vercel.json` is committed at the repo root for deploying the client on
+Vercel from this monorepo: it runs `npm ci` + `npm run build --workspace
+client`, serves `client/dist`, and rewrites every path to `index.html` for
+the client-side router. Set `VITE_API_BASE_URL` as a Vercel project env var
+(Production scope) to the Render API's URL — Vercel runs the build command
+above itself, so this still applies at build time as described below.
 
 ### Build
 

@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: pbls-rescue-path-api
+    env: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Set these in the Render dashboard, not here — never commit real
+      # secrets to this file (see docs/DEPLOY.md's env var table).
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CLIENT_ORIGIN
+        sync: false
