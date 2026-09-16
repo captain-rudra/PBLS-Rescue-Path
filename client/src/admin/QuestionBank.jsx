@@ -9,6 +9,7 @@ import {
   lockLevel,
   unlockLevel,
   archiveQuestion,
+  unarchiveQuestion,
   hardDeleteQuestion,
   deleteLevel,
   hardDeleteLevel,
@@ -55,7 +56,7 @@ const MediaState = ({ mediaStatus }) => {
   );
 };
 
-const RowContent = ({ question, canDelete, onArchive, onHardDelete, dragHandle }) => (
+const RowContent = ({ question, canDelete, onArchive, onUnarchive, onHardDelete, dragHandle }) => (
   <>
     {dragHandle}
     <span className="w-6 text-[11px] text-slate-400">{question.sequence}</span>
@@ -73,6 +74,11 @@ const RowContent = ({ question, canDelete, onArchive, onHardDelete, dragHandle }
       </button>
     )}
     {canDelete && question.status === "archived" && (
+      <button type="button" onClick={() => onUnarchive(question)} className="text-[11px] font-semibold text-[#34D399] underline">
+        Unarchive
+      </button>
+    )}
+    {canDelete && question.status === "archived" && (
       <button type="button" onClick={() => onHardDelete(question)} className="text-[11px] font-semibold text-[#FF6B5B] underline">
         Hard delete
       </button>
@@ -86,7 +92,7 @@ const RowContent = ({ question, canDelete, onArchive, onHardDelete, dragHandle }
 // never calls useSortable at all rather than calling it with dragging
 // disabled — keeps the two rendering paths honest about what's actually
 // interactive.
-const SortableRow = ({ question, canDelete, onArchive, onHardDelete }) => {
+const SortableRow = ({ question, canDelete, onArchive, onUnarchive, onHardDelete }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: question.questionId });
   const style = { transform: CSS.Transform.toString(transform), transition };
   return (
@@ -100,6 +106,7 @@ const SortableRow = ({ question, canDelete, onArchive, onHardDelete }) => {
         question={question}
         canDelete={canDelete}
         onArchive={onArchive}
+        onUnarchive={onUnarchive}
         onHardDelete={onHardDelete}
         dragHandle={
           <button type="button" {...attributes} {...listeners} className="cursor-grab text-slate-400" aria-label="Drag to reorder" title="Drag to reorder">
@@ -111,13 +118,13 @@ const SortableRow = ({ question, canDelete, onArchive, onHardDelete }) => {
   );
 };
 
-const StaticRow = ({ question, canDelete, onArchive, onHardDelete }) => (
+const StaticRow = ({ question, canDelete, onArchive, onUnarchive, onHardDelete }) => (
   <li data-testid={`question-row-${question.questionId}`} className="flex items-center gap-3 rounded-md border border-[#3A4A63]/20 bg-white/60 px-3 py-2 text-[13px]">
-    <RowContent question={question} canDelete={canDelete} onArchive={onArchive} onHardDelete={onHardDelete} dragHandle={<span className="w-4 text-slate-300">⠿</span>} />
+    <RowContent question={question} canDelete={canDelete} onArchive={onArchive} onUnarchive={onUnarchive} onHardDelete={onHardDelete} dragHandle={<span className="w-4 text-slate-300">⠿</span>} />
   </li>
 );
 
-const LevelGroup = ({ level, questions, admin, reorderDisabled, onReorder, onLock, onUnlock, onArchive, onHardDeleteQuestion, onDeleteLevel, onHardDeleteLevel }) => {
+const LevelGroup = ({ level, questions, admin, reorderDisabled, onReorder, onLock, onUnlock, onArchive, onUnarchiveQuestion, onHardDeleteQuestion, onDeleteLevel, onHardDeleteLevel }) => {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const ids = questions.map(q => q.questionId);
   const isSuperAdmin = admin?.role === "super_admin";
@@ -176,7 +183,7 @@ const LevelGroup = ({ level, questions, admin, reorderDisabled, onReorder, onLoc
           <p className="mb-1.5 text-[10px] text-slate-400">Clear the type/status filter to drag-reorder — reordering rewrites the whole level's sequence at once.</p>
           <ol className="flex flex-col gap-1.5">
             {questions.map(question => (
-              <StaticRow key={question.questionId} question={question} canDelete={isSuperAdmin} onArchive={onArchive} onHardDelete={onHardDeleteQuestion} />
+              <StaticRow key={question.questionId} question={question} canDelete={isSuperAdmin} onArchive={onArchive} onUnarchive={onUnarchiveQuestion} onHardDelete={onHardDeleteQuestion} />
             ))}
           </ol>
         </>
@@ -185,7 +192,7 @@ const LevelGroup = ({ level, questions, admin, reorderDisabled, onReorder, onLoc
           <SortableContext items={ids} strategy={verticalListSortingStrategy}>
             <ol className="flex flex-col gap-1.5">
               {questions.map(question => (
-                <SortableRow key={question.questionId} question={question} canDelete={isSuperAdmin} onArchive={onArchive} onHardDelete={onHardDeleteQuestion} />
+                <SortableRow key={question.questionId} question={question} canDelete={isSuperAdmin} onArchive={onArchive} onUnarchive={onUnarchiveQuestion} onHardDelete={onHardDeleteQuestion} />
               ))}
             </ol>
           </SortableContext>
@@ -291,6 +298,27 @@ export const QuestionBank = () => {
     try {
       await archiveQuestion(question.questionId);
       setNotice(`Archived "${question.title}".`);
+      load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  const handleUnarchiveQuestion = async question => {
+    if (
+      !window.confirm(
+        `Unarchive "${question.title}"? It becomes visible and servable again immediately. Any participant who already completed this level without it will have to redo the level and reach 100% again — including any level they'd unlocked after it, which will re-lock too until they do.`
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await unarchiveQuestion(question.questionId);
+      setNotice(
+        `Unarchived "${question.title}".` +
+          (res.affectedParticipantCount > 0
+            ? ` ${res.affectedParticipantCount} participant${res.affectedParticipantCount === 1 ? "" : "s"} will need to redo this level.`
+            : "")
+      );
       load();
     } catch (err) {
       setError(err.message);
@@ -419,6 +447,7 @@ export const QuestionBank = () => {
               onLock={handleLock}
               onUnlock={handleUnlock}
               onArchive={handleArchive}
+              onUnarchiveQuestion={handleUnarchiveQuestion}
               onHardDeleteQuestion={handleHardDeleteQuestion}
               onDeleteLevel={handleDeleteLevel}
               onHardDeleteLevel={handleHardDeleteLevel}

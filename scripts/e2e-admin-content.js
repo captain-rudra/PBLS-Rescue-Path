@@ -539,6 +539,216 @@ const testArchivedCannotBeEdited = async () => {
   log("archived question correctly refuses further edits");
 };
 
+// --- Archive/unarchive actually affecting live and future play ----------
+// Both tests below drive real HTTP play (POST /play/attempts,
+// /play/responses, /submit) rather than hand-built Attempt docs — Part 1
+// specifically needs the real idempotent-resume path exercised, not a
+// direct DB read.
+
+// The unlock chain is strictly sequential from order 0 (prelevel) upward,
+// so any scratch level above l4 needs every real level actually "mastered"
+// for this participant first. Hand-building those 5 attempts is far
+// cheaper than really playing through them and exercises none of the
+// logic these two tests care about.
+const masterRealLevelsFor = async participantId => {
+  const realLevels = await Level.find({ key: { $in: ["prelevel", "l1", "l2", "l3", "l4"] } });
+  for (const lvl of realLevels) {
+    await Attempt.create({
+      participantId,
+      sessionId: new mongoose.Types.ObjectId(),
+      levelId: lvl._id,
+      attemptNo: 1,
+      kind: "first",
+      isPractice: false,
+      questionIds: [new mongoose.Types.ObjectId()],
+      startedAt: new Date(),
+      submittedAt: new Date(),
+      activeMs: 1000,
+      hiddenMs: 0,
+      score: 100,
+      accuracy: 100,
+      passed: true,
+      starsAwarded: 3,
+      status: "submitted"
+    });
+  }
+};
+
+const answerAndSubmit = async (token, attemptId, answers) => {
+  for (const { questionId, correct } of answers) {
+    const now = new Date();
+    const res = await request(
+      "POST",
+      "/play/responses",
+      {
+        attemptId,
+        questionId,
+        given: { selected: correct ? "A" : "B" },
+        shownAt: new Date(now.getTime() - 2000).toISOString(),
+        answeredAt: now.toISOString()
+      },
+      { token }
+    );
+    assert.equal(res.status, 201, `answering ${questionId}: ${JSON.stringify(res.body)}`);
+  }
+  const submitted = await request("POST", `/play/attempts/${attemptId}/submit`, undefined, { token });
+  assert.equal(submitted.status, 200, JSON.stringify(submitted.body));
+  return submitted.body;
+};
+
+const mcqDraft = (level, sequence, title) => ({
+  levelId: level._id,
+  levelKey: level.key,
+  sequence,
+  type: "mcq",
+  title,
+  objective: level.objectives[0],
+  prompt: "?",
+  options: [{ key: "A", text: "right" }, { key: "B", text: "wrong" }],
+  correct: "A",
+  feedback: { text: "ok" },
+  points: 100,
+  status: "published",
+  version: 1
+});
+
+const testArchivedQuestionSkippedLive = async () => {
+  const superToken = await adminToken(superAdmin.email, superAdminPassword);
+
+  const level = await Level.create({
+    key: `e2e-archive-live-${Date.now()}`,
+    order: 950,
+    title: "Archive-live scratch",
+    scene: "Bench",
+    role: "Tester",
+    objectives: ["archive obj"],
+    passMark: 50,
+    status: "published"
+  });
+  const q1 = await Question.create(mcqDraft(level, 1, "Q1"));
+  const q2 = await Question.create(mcqDraft(level, 2, "Q2 (will be archived)"));
+
+  const participant = await Participant.create({ code: `E2E-ARCHLIVE-${Date.now()}`, arm: "E", sessionId: new mongoose.Types.ObjectId() });
+  await masterRealLevelsFor(participant._id);
+  const token = await playToken(participant.code, "1234");
+
+  const created = await request("POST", "/play/attempts", { levelKey: level.key, kind: "first" }, { token });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.questions.length, 2, "both questions pinned at creation");
+
+  const archived = await request("DELETE", `/admin/questions/${q2._id}`, undefined, { token: superToken });
+  assert.equal(archived.status, 200, JSON.stringify(archived.body));
+
+  // Resuming (the idempotent branch of POST /play/attempts) must no longer
+  // serve the now-archived question.
+  const resumed = await request("POST", "/play/attempts", { levelKey: level.key, kind: "first" }, { token });
+  assert.equal(resumed.status, 200, JSON.stringify(resumed.body));
+  assert.equal(resumed.body.questions.length, 1, "the archived question must no longer be served on resume");
+  assert.equal(resumed.body.questions[0].questionId, String(q1._id));
+
+  // Submitting must succeed WITHOUT ever answering the archived question.
+  const submitted = await answerAndSubmit(token, resumed.body.attempt.attemptId, [{ questionId: String(q1._id), correct: true }]);
+  assert.equal(submitted.outcome, "mastered");
+
+  const rawAttempt = await Attempt.findById(resumed.body.attempt.attemptId).lean();
+  assert.equal(rawAttempt.accuracy, 100, "accuracy is computed only against the 1 non-archived question, not 2");
+
+  await Participant.deleteOne({ _id: participant._id });
+  await Attempt.deleteMany({ participantId: participant._id });
+  await Response.deleteMany({ participantId: participant._id });
+  await Question.deleteMany({ levelId: level._id });
+  await Level.deleteOne({ _id: level._id });
+
+  log("archived question is excluded live on resume, never blocks submit, and is excluded from scoring OK");
+};
+
+const testUnarchiveForcesReplayAndCascades = async () => {
+  const superToken = await adminToken(superAdmin.email, superAdminPassword);
+
+  const levelA = await Level.create({
+    key: `e2e-unarch-a-${Date.now()}`,
+    order: 951,
+    title: "Unarchive A",
+    scene: "Bench",
+    role: "Tester",
+    objectives: ["ua obj"],
+    passMark: 50,
+    status: "published"
+  });
+  const levelB = await Level.create({
+    key: `e2e-unarch-b-${Date.now()}`,
+    order: 952,
+    title: "Unarchive B",
+    scene: "Bench",
+    role: "Tester",
+    objectives: ["ub obj"],
+    passMark: 50,
+    status: "published"
+  });
+  const aq1 = await Question.create(mcqDraft(levelA, 1, "A-Q1"));
+  const aq2 = await Question.create(mcqDraft(levelA, 2, "A-Q2 (archived)"));
+  const bq1 = await Question.create(mcqDraft(levelB, 1, "B-Q1"));
+
+  // Archived BEFORE anyone ever plays level A, so no attempt ever pins it.
+  await request("DELETE", `/admin/questions/${aq2._id}`, undefined, { token: superToken });
+
+  const participant = await Participant.create({ code: `E2E-UNARCH-${Date.now()}`, arm: "E", sessionId: new mongoose.Types.ObjectId() });
+  await masterRealLevelsFor(participant._id);
+  const token = await playToken(participant.code, "1234");
+
+  const attA = await request("POST", "/play/attempts", { levelKey: levelA.key, kind: "first" }, { token });
+  assert.equal(attA.status, 201, JSON.stringify(attA.body));
+  assert.equal(attA.body.questions.length, 1, "only the non-archived question is pinned while the other is archived");
+  await answerAndSubmit(token, attA.body.attempt.attemptId, [{ questionId: String(aq1._id), correct: true }]);
+
+  const attB = await request("POST", "/play/attempts", { levelKey: levelB.key, kind: "first" }, { token });
+  assert.equal(attB.status, 201, JSON.stringify(attB.body));
+  await answerAndSubmit(token, attB.body.attempt.attemptId, [{ questionId: String(bq1._id), correct: true }]);
+
+  const findState = (body, key) => body.levels.find(l => l.key === key)?.state;
+  const beforeUnarchive = await request("GET", "/play/levels", undefined, { token });
+  assert.equal(findState(beforeUnarchive.body, levelA.key), "complete");
+  assert.equal(findState(beforeUnarchive.body, levelB.key), "complete");
+
+  const unarchived = await request("POST", `/admin/questions/${aq2._id}/unarchive`, undefined, { token: superToken });
+  assert.equal(unarchived.status, 200, JSON.stringify(unarchived.body));
+  assert.ok(unarchived.body.affectedParticipantCount >= 1, "this participant must be counted as affected");
+  assert.ok(await AuditLog.findOne({ action: "question_unarchived", "target.id": aq2._id }), "unarchive writes its own audit row");
+  assert.ok(await AuditLog.findOne({ action: "participant_level_reset", "target.id": participant._id }), "the auto-reset writes an audit row too");
+
+  const afterUnarchive = await request("GET", "/play/levels", undefined, { token });
+  assert.equal(findState(afterUnarchive.body, levelA.key), "active", "level A must show as needing a fresh attempt");
+  assert.equal(findState(afterUnarchive.body, levelB.key), "locked", "level B must re-lock — the chosen strict-cascade behavior");
+
+  const oldAttA = await Attempt.findById(attA.body.attempt.attemptId).lean();
+  assert.ok(oldAttA, "the pre-unarchive attempt must still exist in the database");
+  assert.equal(oldAttA.accuracy, 100, "its own stored fields are unchanged — only what counts as CURRENT progress moved");
+
+  const attA2 = await request("POST", "/play/attempts", { levelKey: levelA.key, kind: "first" }, { token });
+  assert.equal(attA2.status, 201, JSON.stringify(attA2.body));
+  assert.equal(attA2.body.questions.length, 2, "the restored question is pinned into the fresh attempt");
+  await answerAndSubmit(token, attA2.body.attempt.attemptId, [
+    { questionId: String(aq1._id), correct: true },
+    { questionId: String(aq2._id), correct: true }
+  ]);
+
+  const afterRedo = await request("GET", "/play/levels", undefined, { token });
+  assert.equal(findState(afterRedo.body, levelA.key), "complete", "level A is mastered again after the full replay");
+  // Level B itself was never reset — only A was. Its own old mastering
+  // attempt was never touched, so the moment A is mastered again and the
+  // chain re-opens, B's still-valid history immediately re-qualifies it as
+  // complete too — it does not need to be replayed, only un-gated.
+  assert.equal(findState(afterRedo.body, levelB.key), "complete", "level B's own untouched mastery re-surfaces once A unlocks it again");
+
+  await Participant.deleteOne({ _id: participant._id });
+  await Attempt.deleteMany({ participantId: participant._id });
+  await Response.deleteMany({ participantId: participant._id });
+  await Question.deleteMany({ levelId: { $in: [levelA._id, levelB._id] } });
+  await Level.deleteMany({ _id: { $in: [levelA._id, levelB._id] } });
+
+  log("unarchive forces a scoped replay and correctly cascades the strict unlock chain OK");
+};
+
 // --- Records and analytics (SPEC §11) -------------------------------------
 
 // A fully hand-built scratch cohort with numbers small enough to check on
@@ -1425,6 +1635,8 @@ const run = async () => {
     await testAdminRouteAuthMatrix();
     await testDeleteArchivesAndAudits();
     await testArchivedCannotBeEdited();
+    await testArchivedQuestionSkippedLive();
+    await testUnarchiveForcesReplayAndCascades();
     await testRecordsAndAnalytics();
     await testExportsAndHandCheck();
     await testParticipantManagement();

@@ -46,6 +46,10 @@ export const getQuestion = id => request("GET", `/questions/${id}`);
 export const createQuestion = payload => request("POST", "/questions", payload);
 export const updateQuestion = (id, payload) => request("PATCH", `/questions/${id}`, payload);
 export const archiveQuestion = (id, reason) => request("DELETE", `/questions/${id}`, { reason });
+// Straight back to published. May force some participants to redo the
+// level (see the server route's comment) — the response's
+// affectedParticipantCount says how many.
+export const unarchiveQuestion = (id, reason) => request("POST", `/questions/${id}/unarchive`, { reason });
 // Irreversible — only succeeds once already archived AND never served to a real attempt.
 export const hardDeleteQuestion = (id, reason) => request("DELETE", `/questions/${id}/permanent`, { reason });
 export const reorderQuestions = (levelKey, orderedQuestionIds, reason) => request("POST", "/questions/reorder", { levelKey, orderedQuestionIds, reason });

@@ -4,6 +4,7 @@ import Level from "../../models/Level.js";
 import Question from "../../models/Question.js";
 import Attempt from "../../models/Attempt.js";
 import Response from "../../models/Response.js";
+import Participant from "../../models/Participant.js";
 import { STATUS, QUESTION_TYPES } from "../../../../shared/constants.js";
 import { sendError } from "../../lib/httpError.js";
 import { requireSuperAdmin } from "../../middleware/requireSuperAdmin.js";
@@ -293,6 +294,77 @@ router.delete("/:id", requireSuperAdmin, async (request, response) => {
   });
 
   response.json({ question: rowPayload(question) });
+});
+
+// Undoes an archive in one step, straight back to published — symmetric
+// with archiving itself being one step. Mastery is frozen per-attempt from
+// that attempt's own pinned questionIds (scoring.js's aggregateAttempt),
+// never recomputed against the level's live question set — so a
+// participant who already mastered this level WITHOUT this question (every
+// attempt made while it was archived necessarily excluded it, since it
+// wasn't servable to pin) needs to be made to redo the level now that it's
+// back. This reuses the exact same reset mechanism the admin
+// reset-level route uses (Participant.levelResets) — a boundary marker,
+// never touching the old Attempt/Response rows — so the level's own state
+// reverts and, by the ordinary unlock chain in computeLevelProgress, every
+// later level the participant had already unlocked re-locks too until
+// they remaster this one. Their next NEW attempt is unaffected by any of
+// this: attempt creation always pins whatever is CURRENTLY published, so
+// it naturally includes the restored question.
+router.post("/:id/unarchive", requireSuperAdmin, async (request, response) => {
+  const { id } = request.params;
+  if (!mongoose.isValidObjectId(id)) return sendError(response, 400, "INVALID_ID", "Not a valid question id");
+  const question = await Question.findById(id);
+  if (!question) return sendError(response, 404, "QUESTION_NOT_FOUND", "No such question");
+  if (question.status !== STATUS.ARCHIVED) return sendError(response, 409, "NOT_ARCHIVED", "This question is not archived");
+
+  const before = rowPayload(question);
+  question.status = STATUS.PUBLISHED;
+  question.updatedBy = request.admin._id;
+  await question.save();
+
+  // Airtight: any non-practice attempt on this level that doesn't contain
+  // this question's id was necessarily made while it was archived (it
+  // could not have been pinned otherwise) — no false positives or negatives.
+  const affectedParticipantIds = await Attempt.distinct("participantId", {
+    levelId: question.levelId,
+    isPractice: false,
+    questionIds: { $nin: [question._id] }
+  });
+
+  const resetAt = new Date();
+  for (const participantId of affectedParticipantIds) {
+    await Attempt.updateMany(
+      { participantId, levelId: question.levelId, status: STATUS.IN_PROGRESS },
+      { $set: { status: STATUS.ABANDONED } }
+    );
+    const participantBefore = await Participant.findById(participantId);
+    if (!participantBefore) continue; // soft/hard-deleted since — nothing left to reset
+    participantBefore.levelResets.push({ levelId: question.levelId, resetAt, resetBy: "admin", adminId: request.admin._id });
+    await participantBefore.save();
+
+    await writeAuditLog({
+      actorId: request.admin._id,
+      actorRole: request.admin.role,
+      action: "participant_level_reset",
+      target: { kind: "participant", id: participantId },
+      before: { note: "auto-reset: level replayed without a question that was later unarchived" },
+      after: { levelId: String(question.levelId), resetAt },
+      reason: `Unarchiving "${question.title}" requires a fresh attempt to include it`
+    });
+  }
+
+  await writeAuditLog({
+    actorId: request.admin._id,
+    actorRole: request.admin.role,
+    action: "question_unarchived",
+    target: { kind: "question", id: question._id },
+    before,
+    after: { ...rowPayload(question), affectedParticipantCount: affectedParticipantIds.length },
+    reason: request.body?.reason ?? null
+  });
+
+  response.json({ question: rowPayload(question), affectedParticipantCount: affectedParticipantIds.length });
 });
 
 // Permanently delete (hard delete) — irreversible, and deliberately

@@ -4,7 +4,7 @@
 // into a score. See docs/SPEC.md sections 2.3, 2.7 and 3.7.
 
 import { responseDamage, vitalsFromDamage } from "../../../shared/vitals.js";
-import { ATTEMPT_OUTCOMES } from "../../../shared/constants.js";
+import { ATTEMPT_OUTCOMES, STATUS } from "../../../shared/constants.js";
 
 export const OPTION_BASED_TYPES = new Set(["mcq", "video_mcq", "animation_mcq", "split_screen", "hotspot_video"]);
 
@@ -181,7 +181,16 @@ export const aggregateAttempt = ({ level, questions, responses }) => {
   // lands as a wrong answer) and the streak bonus (a free "correct" between
   // two real ones). Excluded from every figure below except timing —
   // watching it is genuine time-on-task and is kept.
-  const isScored = response => questionById.get(String(response.questionId))?.type !== "interlude";
+  //
+  // A question archived after this attempt already pinned it gets the
+  // exact same treatment, for the same reason: it must count for nothing
+  // (not the denominator, not points, not vitals) whether or not it was
+  // answered before being archived — it is no longer part of the
+  // assessment. Timing is still kept (real time on task either way).
+  const isScored = response => {
+    const question = questionById.get(String(response.questionId));
+    return question?.type !== "interlude" && question?.status !== STATUS.ARCHIVED;
+  };
 
   let totalPoints = 0;
   let correctCount = 0;
@@ -191,8 +200,9 @@ export const aggregateAttempt = ({ level, questions, responses }) => {
   const missedQuestionIds = [];
 
   for (const response of ordered) {
-    totalPoints += response.partialScore;
-    if (isScored(response)) {
+    const scored = isScored(response);
+    if (scored) totalPoints += response.partialScore;
+    if (scored) {
       if (response.isCorrect) {
         correctCount += 1;
       } else {
@@ -200,13 +210,13 @@ export const aggregateAttempt = ({ level, questions, responses }) => {
       }
     }
     const question = questionById.get(String(response.questionId));
-    cumulativeDamage += responseDamage(question?.points, response.partialScore);
+    if (scored) cumulativeDamage += responseDamage(question?.points, response.partialScore);
     const itemMs = new Date(response.answeredAt) - new Date(response.shownAt) - (response.hiddenMs || 0);
     activeMs += Math.max(0, itemMs);
     hiddenMs += response.hiddenMs || 0;
   }
 
-  const totalQuestions = questions.filter(q => q.type !== "interlude").length;
+  const totalQuestions = questions.filter(q => q.type !== "interlude" && q.status !== STATUS.ARCHIVED).length;
   const accuracy = totalQuestions ? Math.round((correctCount / totalQuestions) * 100) : 0;
   const streakBonus = computeStreakBonus(ordered.filter(isScored).map(r => r.isCorrect));
   const score = totalPoints + streakBonus;
@@ -229,7 +239,11 @@ export const summarizeObjectives = ({ level, questions, responses }) => {
     // interlude carries an objective tag (SPEC 4.4 check 8 still applies to
     // it) but is not itself an assessment of that objective (SPEC 3.8) —
     // excluded here so its always-true response can't trivially satisfy one.
-    const relevant = questions.filter(q => q.objective === objective && q.type !== "interlude");
+    // A question archived after this attempt pinned it is excluded the
+    // same way — it's no longer required to have a response at all (see
+    // play/attempts.js's submit handler), so leaving it "relevant" here
+    // would wrongly fail every objective it tags just for having no answer.
+    const relevant = questions.filter(q => q.objective === objective && q.type !== "interlude" && q.status !== STATUS.ARCHIVED);
     if (relevant.length === 0) return { objective, applicable: false, met: false };
     const met = relevant.every(q => responseByQuestionId.get(String(q._id))?.isCorrect === true);
     return { objective, applicable: true, met };

@@ -49,7 +49,7 @@ const buildPerformanceSummary = (level, questions, responses) => {
   const objectives = summarizeObjectives({ level, questions, responses });
   const questionById = new Map(questions.map(q => [String(q._id), q]));
   const missedItems = responses
-    .filter(r => !r.isCorrect)
+    .filter(r => !r.isCorrect && questionById.get(String(r.questionId))?.status !== STATUS.ARCHIVED)
     .map(r => {
       const q = questionById.get(String(r.questionId));
       return { questionId: String(r.questionId), title: q?.title ?? null, objective: q?.objective ?? null, prompt: q?.prompt ?? null };
@@ -110,7 +110,13 @@ router.post("/", async (request, response) => {
     }).sort({ createdAt: -1 });
 
     if (existingInProgress) {
-      const pinnedQuestions = await loadPinnedQuestions(existingInProgress.questionIds);
+      // A question can be archived AFTER it was already pinned into this
+      // attempt (attempt creation only filters at that one moment) — drop
+      // it here so a participant resuming mid-level is never shown or
+      // required to answer something an admin has since archived. Scoring
+      // (scoring.js's aggregateAttempt) makes the matching exclusion at
+      // submit time; nothing here touches attempt.questionIds itself.
+      const pinnedQuestions = (await loadPinnedQuestions(existingInProgress.questionIds)).filter(q => q.status !== STATUS.ARCHIVED);
       return response.status(200).json(attemptPayload(existingInProgress, level, pinnedQuestions, [...target.attempts, existingInProgress]));
     }
 
@@ -198,8 +204,14 @@ router.post("/:id/submit", async (request, response) => {
   const questions = await Question.find({ _id: { $in: attempt.questionIds } });
   const responses = await Response.find({ attemptId: attempt._id, isRetry: false });
 
+  // An id can go from "answerable" to archived after this attempt was
+  // created (attempt creation only filters at that one moment) — it must
+  // never be able to block submission once it's no longer being served
+  // (see the idempotent-resume branch above, which already stops showing
+  // it). aggregateAttempt makes the matching exclusion from scoring itself.
+  const questionById = new Map(questions.map(q => [String(q._id), q]));
   const answeredIds = new Set(responses.map(r => String(r.questionId)));
-  const missingIds = attempt.questionIds.map(String).filter(qid => !answeredIds.has(qid));
+  const missingIds = attempt.questionIds.map(String).filter(qid => !answeredIds.has(qid) && questionById.get(qid)?.status !== STATUS.ARCHIVED);
   if (missingIds.length > 0) {
     return sendError(response, 400, "INCOMPLETE_ATTEMPT", `${missingIds.length} question(s) in this attempt have no response yet`);
   }
